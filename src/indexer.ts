@@ -14,16 +14,18 @@ function stringHash(s: string): string {
 }
 
 function formatTagWord(tagWord: string): string {
-    return tagWord.startsWith('_') ? tagWord.slice(1).toUpperCase() : tagWord;
+    // Only remove leading underscore but preserve case
+    return tagWord.startsWith('_') ? tagWord.slice(1) : tagWord;
 }
 
 function capitalizeFirst(s: string): string {
+    // Keep this function as is to ensure the first letter is capitalized
     return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 /**
- * Splits tags into words and formats all caps if the word also starts with an underscore.
- * E.g.: tag "__rl_and__ml" would become "RL and ML"
+ * Splits tags into words and formats by removing leading underscores but preserving case.
+ * E.g.: tag "__RL_and__ML" would become "RL and ML"
  *
  * @param {string} t - The tag string to be formatted into a header.
  * @returns {string} The formatted header string.
@@ -39,17 +41,12 @@ function tagToHeader(t: string): string {
             }
             return formatTagWord(word);
         }).filter(word => word !== '');
-        return capitalizeFirst(words.join(' '));
+        
+        // Only capitalize the first letter of the whole component, preserve case of other words
+        return words.map(word => capitalizeFirst(word)).join(" ");
     }).join(' / ');
 }
 
-/**
- * Creates a block reference string where non-word symbols are replaced by dashes.
- * The default tag used is "main-index" if none is provided.
- *
- * @param {string} [tag="main-index"] - The tag to convert into a block reference.
- * @returns {string} The block reference string.
- */
 function tagToBlockReference(tag: string = "main-index"): string {
     if (tag.length === 0) {
         return '^indexof-root000';
