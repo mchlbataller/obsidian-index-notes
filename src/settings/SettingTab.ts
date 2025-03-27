@@ -250,13 +250,9 @@ class IndexNote {
     }
 
     makeIndexTitle(rootTag: string, prefix: string): string {
-        // If omit_index_titles is enabled, return empty string
-        if (this.settings.omit_index_titles) {
-            return "";
-        }
         return prefix + tagToHeader(rootTag) + "\n";
     }
-    
+
     sortIndexTags(): void {
         this.indexTags.sort((a, b) => compareStrings(getLastTagComponent(a), getLastTagComponent(b)));
         this.metaIndexTags.sort((a, b) => compareStrings(getLastTagComponent(a), getLastTagComponent(b)));
@@ -280,26 +276,15 @@ class IndexNote {
                 
                 if (this.settings.use_callout_blocks) {
                     // Callout block format
-                    // For callout blocks, we should still include a title indicator even if titles are omitted
-                    const calloutTitle = this.settings.omit_index_titles ? 
-                        "Index" : title.trim();
-                    blockText = `> [!example] ${calloutTitle}`;
-                    
+                    blockText = `> [!example] ${title}`;
                     const sourceNote = rootNode.findChildNode(indexTag);
                     if (sourceNote) {
-                        // Need a newline after the title if title is not omitted
-                        if (!this.settings.omit_index_titles) {
-                            blockText += "\n";
-                        }
                         blockText += sourceNote.getIndex(this.note);
                     }
                     blockText += `> \n`;
                 } else {
                     // Plain list format
-                    if (!this.settings.omit_index_titles) {
-                        blockText = `${headingPrefix}${title}`;
-                    }
-                    
+                    blockText = `${headingPrefix}${title}`;
                     const sourceNote = rootNode.findChildNode(indexTag);
                     if (sourceNote) {
                         // Remove the '>' prefix from each line for regular indexes
@@ -321,13 +306,7 @@ class IndexNote {
             let allMetaIndexContent = '';
             
             this.metaIndexTags.forEach(indexTag => {
-                // For meta-indices, use at least "Meta-index" as title even if titles are omitted
-                const metaTitle = this.settings.omit_index_titles ? 
-                    "Meta-index" : 
-                    this.makeIndexTitle(indexTag, indexTag ? "Meta-index of: " : "Meta-index");
-                    
-                let blockText = `> [!example] ${metaTitle}`;
-                
+                let blockText = `> [!example] ${this.makeIndexTitle(indexTag, indexTag ? "Meta-index of: " : "Meta-index")}`;
                 const sourceNote = rootNode.findChildNode(indexTag);
                 if (sourceNote) {
                     blockText += sourceNote.getMetaIndex(this.note);
@@ -344,7 +323,7 @@ class IndexNote {
         
         return indexBlocks;
     }
-    
+
     getUpdatedContent(content: string, indexBlocks: Array<[string, string]>): string {
         try {
             // Split the file content to separate frontmatter

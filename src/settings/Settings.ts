@@ -13,6 +13,7 @@ export interface IndexNotesSettings {
     use_callout_blocks: boolean;
     use_heading_for_index: boolean;
     heading_level: number;
+    omit_index_titles: boolean;
 }
 
 export const DEFAULT_SETTINGS: IndexNotesSettings = {
@@ -25,7 +26,8 @@ export const DEFAULT_SETTINGS: IndexNotesSettings = {
     metadata_template: 'date_created: {{today}}\ntags: {{tags}}',
     use_callout_blocks: false,
     use_heading_for_index: true,
-    heading_level: 1
+    heading_level: 1,
+    omit_index_titles: false
 }
 
 export class IndexNotesSettingTab extends PluginSettingTab {
@@ -151,34 +153,50 @@ export class IndexNotesSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(this.containerEl)
-            .setName('Use heading for index title')
-            .setDesc('When enabled, index titles will be formatted as headings. When disabled, they will be part of the block.')
+            .setName('Omit Index Titles')
+            .setDesc('When enabled, index blocks will not include titles, making the indices more compact.')
             .addToggle(toggle => toggle
-                .setValue(this.plugin.settings.use_heading_for_index)
+                .setValue(this.plugin.settings.omit_index_titles)
                 .onChange(async (value) => {
                     try {
-                        this.plugin.settings.use_heading_for_index = value;
+                        this.plugin.settings.omit_index_titles = value;
                         await this.plugin.saveSettings();
                     } catch (error) {
-                        console.error("Failed to save use heading setting:", error);
+                        console.error("Failed to save omit index titles setting:", error);
                     }
                 }));
 
-        new Setting(this.containerEl)
+        const headingToggle = new Setting(this.containerEl)
+            .setName('Use heading for index title')
+            .setDesc('When enabled, index titles will be formatted as headings. When disabled, they will be part of the block.')
+            .addToggle(toggle => toggle
+            .setValue(this.plugin.settings.use_heading_for_index)
+            .setDisabled(this.plugin.settings.omit_index_titles)
+            .onChange(async (value) => {
+                try {
+                this.plugin.settings.use_heading_for_index = value;
+                await this.plugin.saveSettings();
+                } catch (error) {
+                console.error("Failed to save use heading setting:", error);
+                }
+            }));
+
+        const headingLevel = new Setting(this.containerEl)
             .setName('Heading level')
             .setDesc('The heading level to use for index titles when headings are enabled (1-6).')
             .addSlider(slider => slider
-                .setLimits(1, 6, 1)
-                .setValue(this.plugin.settings.heading_level)
-                .setDynamicTooltip()
-                .onChange(async (value) => {
-                    try {
-                        this.plugin.settings.heading_level = value;
-                        await this.plugin.saveSettings();
-                    } catch (error) {
-                        console.error("Failed to save heading level setting:", error);
-                    }
-                }));
+            .setLimits(1, 6, 1)
+            .setValue(this.plugin.settings.heading_level)
+            .setDisabled(this.plugin.settings.omit_index_titles)
+            .setDynamicTooltip()
+            .onChange(async (value) => {
+                try {
+                this.plugin.settings.heading_level = value;
+                await this.plugin.saveSettings();
+                } catch (error) {
+                console.error("Failed to save heading level setting:", error);
+                }
+            }));
     }
 
     add_exclude_folders_setting() {
