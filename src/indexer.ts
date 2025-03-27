@@ -408,6 +408,25 @@ export class IndexUpdater {
     update(): void {
         const t0 = Date.now();
         const indexSchema = this.scan();
+        
+        // Check if there's an active file in the editor
+        const activeFile = this.app.workspace.getActiveFile();
+        
+        if (activeFile) {
+            // Only process the active file if it's in the index notes
+            const activeIndexNote = indexSchema.indexNotes.find(note => note.note.path === activeFile.path);
+            
+            if (activeIndexNote) {
+                const indexBlocks = activeIndexNote.createIndexBlocks(indexSchema.rootNode);
+                this.app.vault.process(activeIndexNote.note, data => {
+                    return activeIndexNote.getUpdatedContent(data, indexBlocks);
+                });
+                console.log("Updated active file " + activeFile.path + " in " + (Date.now() - t0) + " ms");
+                return;
+            }
+        }
+        
+        // If no active file or active file is not an index note, update all files
         indexSchema.indexNotes.forEach(indexNote => {
             const indexBlocks = indexNote.createIndexBlocks(indexSchema.rootNode);
             this.app.vault.process(indexNote.note, data => {
