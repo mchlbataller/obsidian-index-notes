@@ -58,8 +58,19 @@ function tagToBlockReference(tag: string = "main-index"): string {
 }
 
 function getBlockRegex(blockRef: string): RegExp {
-    // Match both callout block format and standard heading format
-    return new RegExp(`(?:^(?:>\\s*\\[!example\\].*\\n)(?:>.*\\n)*(?:>\\s*\\${blockRef}$))|(?:^#+\\s+.*\\n(?:(?!^#)[\\s\\S])*?${blockRef})`, "gm");
+    // Original regex still needed for backward compatibility with old format
+    return new RegExp(`(?:^(?:>\\s*\\[!example\\].*\\n)(?:>.*\\n)*(?:>\\s*\\${blockRef}$))|(?:^#+\\s+.*\\n(?:(?!^#)[\\s\\S])*?\\s*${blockRef})`, "gm");
+}
+
+// Add these constants at the top level of the file
+const INDEX_START_MARKER = '%% start index notes %%';
+const INDEX_END_MARKER = '%% end index notes %%';
+const META_INDEX_START_MARKER = '%% start meta-index notes %%';
+const META_INDEX_END_MARKER = '%% end meta-index notes %%';
+
+// Add a function to detect the new marker format
+function getMarkerBlockRegex(): RegExp {
+    return new RegExp(`${INDEX_START_MARKER}[\\s\\S]*?${INDEX_END_MARKER}|${META_INDEX_START_MARKER}[\\s\\S]*?${META_INDEX_END_MARKER}`, "gm");
 }
 
 function filenameToHeader(filename: string): string {
@@ -251,87 +262,109 @@ class IndexNote {
         this.sortIndexTags();
         const indexBlocks: Array<[string, string]> = [];
         
-        // Generate heading markers based on settings
-        const headingPrefix = this.settings.use_heading_for_index ? 
-            '#'.repeat(this.settings.heading_level) + ' ' : '';
-        
-        this.indexTags.forEach(indexTag => {
-            let blockText = '';
-            const title = this.makeIndexTitle(indexTag, "");
+        // Regular index blocks
+        if (this.indexTags.length > 0) {
+            let allIndexContent = '';
             
-            if (this.settings.use_callout_blocks) {
-                // Callout block format
-                blockText = `> [!example] ${title}`;
+            // Generate heading markers based on settings
+            const headingPrefix = this.settings.use_heading_for_index ? 
+                '#'.repeat(this.settings.heading_level) + ' ' : '';
+            
+            this.indexTags.forEach(indexTag => {
+                let blockText = '';
+                const title = this.makeIndexTitle(indexTag, "");
+                
+                if (this.settings.use_callout_blocks) {
+                    // Callout block format
+                    blockText = `> [!example] ${title}`;
+                    const sourceNote = rootNode.findChildNode(indexTag);
+                    if (sourceNote) {
+                        blockText += sourceNote.getIndex(this.note);
+                    }
+                    blockText += `> \n`;
+                } else {
+                    // Plain list format
+                    blockText = `${headingPrefix}${title}`;
+                    const sourceNote = rootNode.findChildNode(indexTag);
+                    if (sourceNote) {
+                        // Remove the '>' prefix from each line for regular indexes
+                        const indexContent = sourceNote.getIndex(this.note);
+                        blockText += indexContent.replace(/^> /gm, '');
+                    }
+                }
+                
+                allIndexContent += blockText + '\n';
+            });
+            
+            // Wrap all index blocks in markers
+            const formattedIndexBlock = `${INDEX_START_MARKER}\n${allIndexContent}${INDEX_END_MARKER}`;
+            indexBlocks.push(['index', formattedIndexBlock]);
+        }
+        
+        // Meta index blocks
+        if (this.metaIndexTags.length > 0) {
+            let allMetaIndexContent = '';
+            
+            this.metaIndexTags.forEach(indexTag => {
+                let blockText = `> [!example] ${this.makeIndexTitle(indexTag, indexTag ? "Meta-index of: " : "Meta-index")}`;
                 const sourceNote = rootNode.findChildNode(indexTag);
                 if (sourceNote) {
-                    blockText += sourceNote.getIndex(this.note);
+                    blockText += sourceNote.getMetaIndex(this.note);
                 }
-                const blockReference = tagToBlockReference(indexTag);
-                blockText += `> \n> ${blockReference}`;
-            } else {
-                // Plain list format
-                blockText = `${headingPrefix}${title}`;
-                const sourceNote = rootNode.findChildNode(indexTag);
-                if (sourceNote) {
-                    // Remove the '>' prefix from each line for regular indexes
-                    const indexContent = sourceNote.getIndex(this.note);
-                    blockText += indexContent.replace(/^> /gm, '');
-                }
-                const blockReference = tagToBlockReference(indexTag);
-                blockText += `${blockReference}`;
-            }
+                blockText += `> \n`;
+                
+                allMetaIndexContent += blockText + '\n';
+            });
             
-            indexBlocks.push([tagToBlockReference(indexTag), blockText]);
-        });
-        
-        // Meta index blocks are always in callout format
-        this.metaIndexTags.forEach(indexTag => {
-            let blockText = `> [!example] ${this.makeIndexTitle(indexTag, indexTag ? "Meta-index of: " : "Meta-index")}`;
-            const sourceNote = rootNode.findChildNode(indexTag);
-            if (sourceNote) {
-                blockText += sourceNote.getMetaIndex(this.note);
-            }
-            const blockReference = tagToBlockReference(indexTag);
-            blockText += `> \n> ${blockReference}`;
-            indexBlocks.push([blockReference, blockText]);
-        });
+            // Wrap all meta-index blocks in markers
+            const formattedMetaIndexBlock = `${META_INDEX_START_MARKER}\n${allMetaIndexContent}${META_INDEX_END_MARKER}`;
+            indexBlocks.push(['meta-index', formattedMetaIndexBlock]);
+        }
         
         return indexBlocks;
     }
 
     getUpdatedContent(content: string, indexBlocks: Array<[string, string]>): string {
-        let result = content;
-        const writtenBlocks = new Set<string>();
-        indexBlocks.forEach(([blockReference, blockContent]) => {
-            const blockRegex = getBlockRegex(blockReference);
-            if (result.match(blockRegex)) {
-                result = result.replace(blockRegex, blockContent);
-            } else {
-                result += '\n\n' + blockContent;
+        try {
+            // Split the file content to separate frontmatter
+            const frontmatterMatch = content.match(/^---\r?\n[\s\S]+?\r?\n---\r?\n/);
+            const frontmatter = frontmatterMatch ? frontmatterMatch[0] : '';
+            
+            // Remove frontmatter from content for processing
+            let mainContent = frontmatterMatch ? content.substring(frontmatter.length) : content;
+            
+            // First remove any existing old-style index blocks (for backward compatibility)
+            const existingBlockRefs = Array.from(mainContent.matchAll(/\^indexof-(?:[a-zA-Z0-9]+-?)+/g))
+                .map(match => match[0]);
+                
+            for (const blockRef of existingBlockRefs) {
+                const blockRegex = getBlockRegex(blockRef);
+                mainContent = mainContent.replace(blockRegex, '');
             }
-            writtenBlocks.add(blockReference);
-        });
-        // Remove untracked indices and duplicates of tracked indices
-        Array.from(result.matchAll(/\^indexof-(?:[a-zA-Z0-9]+-?)+/g)).forEach(existingReference => {
-            const blockRegex = getBlockRegex(existingReference[0]);
-            let matches = Array.from(result.matchAll(blockRegex));
-            let deletedOffset = 0;
-            let i = -1;
-            for (let match of matches) {
-                i++;
-                if (writtenBlocks.has(existingReference[0]) && i === 0) {
-                    continue;
+            
+            // Then remove any existing marker-style index blocks
+            const markerRegex = getMarkerBlockRegex();
+            mainContent = mainContent.replace(markerRegex, '');
+            
+            // Clean up any excessive newlines that might have been created
+            mainContent = mainContent.replace(/\n{3,}/g, '\n\n').trim();
+            
+            // Append all new index blocks at the end
+            let result = mainContent;
+            for (const [_, blockContent] of indexBlocks) {
+                // Make sure there are always two newlines before each block
+                if (result.length > 0 && !result.endsWith('\n\n')) {
+                    result += result.endsWith('\n') ? '\n' : '\n\n';
                 }
-                if (match.index === undefined) {
-                    continue;
-                }
-                let startIndex = match.index - deletedOffset;
-                let endIndex = startIndex + match[0].length;
-                deletedOffset += match[0].length;
-                result = result.slice(0, startIndex) + result.slice(endIndex);
+                result += blockContent;
             }
-        });
-        return result;
+            
+            // Put the frontmatter back at the beginning
+            return frontmatter + result;
+        } catch (error) {
+            console.error("Error updating content:", error);
+            return content; // Return original content on error
+        }
     }
 }
 
@@ -354,85 +387,169 @@ export class IndexUpdater {
         this.settings = settings;
     }
 
-    scan(): IndexSchema {
+    async scan(): Promise<IndexSchema> {
         const excludedFolders = this.settings.exclude_folders.filter(f => f.length > 0);
         const mdFiles = this.app.vault.getMarkdownFiles().filter(f => !excludedFolders.some(excl => f.path.startsWith(excl)));
         const indexSchema = new IndexSchema();
         const rootNode = new Node("", this.settings, this.app);
         const regexIndexTagComponents = new RegExp(`(?:^|(?:\/))(?:${this.settings.index_tag})|(?:${this.settings.meta_index_tag})$`);
         const regexContainsIndex = /\^indexof-(?:[a-zA-Z0-9]+-?)+/g;
+        const regexContainsMarkers = new RegExp(`${INDEX_START_MARKER}|${META_INDEX_START_MARKER}`);
+        
+        // Track all promises to ensure they complete
+        const fileReadPromises: Promise<void>[] = [];
+        
+        // Process all files
         mdFiles.forEach(note => {
-            const frontmatter = this.app.metadataCache.getCache(note.path)?.frontmatter;
-            const indexNote = new IndexNote(note, this.app, this.settings);
-            if (frontmatter) {
-                let fileTags: string | string[] | undefined = frontmatter.tags;
-                if (typeof fileTags === 'string') {
-                    fileTags = fileTags.split(',').map(tag => tag.trim());
-                }
-                if (!fileTags || !Array.isArray(fileTags)) {
-                    console.error("File tags are not an array: ", fileTags);
-                    return;
-                }
-                const hasPriorityTag = fileTags.includes(this.settings.priority_tag);
-                fileTags.forEach(tag => {
-                    const canonicalTag = canonicalizeTag(tag);
-                    const cleanTagPath = canonicalizeTag(canonicalTag.replace(regexIndexTagComponents, ""));
-                    if (getLastTagComponent(canonicalTag) === this.settings.index_tag) {
-                        indexNote.indexTags.push(cleanTagPath);
-                        rootNode.addNoteWithPath(cleanTagPath, note, hasPriorityTag, true);
-                    } else if (getLastTagComponent(canonicalTag) === this.settings.meta_index_tag) {
-                        indexNote.metaIndexTags.push(cleanTagPath);
-                        rootNode.addNoteWithPath(cleanTagPath, note, hasPriorityTag, true);
-                    } else {
-                        rootNode.addNoteWithPath(cleanTagPath, note, hasPriorityTag, false);
+            try {
+                const frontmatter = this.app.metadataCache.getCache(note.path)?.frontmatter;
+                const indexNote = new IndexNote(note, this.app, this.settings);
+                
+                // Process frontmatter tags
+                if (frontmatter) {
+                    // Get tags from frontmatter or from the cache
+                    let fileTags: string[] = [];
+                    
+                    if (frontmatter.tags) {
+                        // Handle different tag formats
+                        if (typeof frontmatter.tags === 'string') {
+                            // String format - split by comma
+                            fileTags = frontmatter.tags.split(',').map(tag => tag.trim());
+                        } else if (Array.isArray(frontmatter.tags)) {
+                            // Array format - use directly
+                            fileTags = frontmatter.tags.map(tag => 
+                                typeof tag === 'string' ? tag : String(tag)
+                            );
+                        } else {
+                            // Unknown format - log but don't error
+                            console.log("Unusual tag format in note:", note.path, "Tags:", frontmatter.tags);
+                            fileTags = [];
+                        }
                     }
-                });
-            }
+                    
+                    // Get any inline tags from the cache
+                    const cachedTags = this.app.metadataCache.getCache(note.path)?.tags;
+                    if (cachedTags && Array.isArray(cachedTags)) {
+                        cachedTags.forEach(tagObj => {
+                            if (tagObj.tag) {
+                                // Remove the # from the beginning if present
+                                const tag = tagObj.tag.startsWith('#') ? tagObj.tag.substring(1) : tagObj.tag;
+                                fileTags.push(tag);
+                            }
+                        });
+                    }
+                    
+                    // Process the collected tags
+                    if (fileTags.length > 0) {
+                        const hasPriorityTag = fileTags.includes(this.settings.priority_tag);
+                        
+                        fileTags.forEach(tag => {
+                            try {
+                                const canonicalTag = canonicalizeTag(tag);
+                                const cleanTagPath = canonicalizeTag(canonicalTag.replace(regexIndexTagComponents, ""));
+                                if (getLastTagComponent(canonicalTag) === this.settings.index_tag) {
+                                    indexNote.indexTags.push(cleanTagPath);
+                                    rootNode.addNoteWithPath(cleanTagPath, note, hasPriorityTag, true);
+                                } else if (getLastTagComponent(canonicalTag) === this.settings.meta_index_tag) {
+                                    indexNote.metaIndexTags.push(cleanTagPath);
+                                    rootNode.addNoteWithPath(cleanTagPath, note, hasPriorityTag, true);
+                                } else {
+                                    rootNode.addNoteWithPath(cleanTagPath, note, hasPriorityTag, false);
+                                }
+                            } catch (error) {
+                                console.error("Error processing tag:", tag, "in note:", note.path, error);
+                            }
+                        });
+                    }
+                }
 
-            if (indexNote.indexTags.length || indexNote.metaIndexTags.length) {
-                indexSchema.indexNotes.push(indexNote);
-            } else {
-                this.app.vault.read(note).then(v => {
-                    // Add notes with regular note with stale indices so they will be cleaned up
-                    if (v.match(regexContainsIndex)) {
-                        indexSchema.indexNotes.push(indexNote);
-                    }
-                });
+                // Add index notes with tags immediately
+                if (indexNote.indexTags.length || indexNote.metaIndexTags.length) {
+                    indexSchema.indexNotes.push(indexNote);
+                } else {
+                    // For notes without index tags, check file content for stale index blocks or markers
+                    const promise = this.app.vault.read(note).then(content => {
+                        if (content.match(regexContainsIndex) || content.match(regexContainsMarkers)) {
+                            indexSchema.indexNotes.push(indexNote);
+                        }
+                    }).catch(error => {
+                        console.error("Error reading file:", note.path, error);
+                    });
+                    
+                    fileReadPromises.push(promise);
+                }
+            } catch (error) {
+                console.error("Error processing note:", note.path, error);
             }
         });
+        
+        // Wait for all file reads to complete
+        await Promise.all(fileReadPromises);
+        
         rootNode.sortAll();
         indexSchema.rootNode = rootNode;
         return indexSchema;
     }
 
-    update(): void {
-        const t0 = Date.now();
-        const indexSchema = this.scan();
-        
-        // Check if there's an active file in the editor
-        const activeFile = this.app.workspace.getActiveFile();
-        
-        if (activeFile) {
-            // Only process the active file if it's in the index notes
-            const activeIndexNote = indexSchema.indexNotes.find(note => note.note.path === activeFile.path);
+    async updateAsync(): Promise<void> {
+        try {
+            const t0 = Date.now();
+            // Wait for scan to complete fully
+            const indexSchema = await this.scan();
             
-            if (activeIndexNote) {
-                const indexBlocks = activeIndexNote.createIndexBlocks(indexSchema.rootNode);
-                this.app.vault.process(activeIndexNote.note, data => {
-                    return activeIndexNote.getUpdatedContent(data, indexBlocks);
-                });
-                console.log("Updated active file " + activeFile.path + " in " + (Date.now() - t0) + " ms");
-                return;
+            // Check if there's an active file in the editor
+            const activeFile = this.app.workspace.getActiveFile();
+            
+            if (activeFile) {
+                // Only process the active file if it's in the index notes
+                const activeIndexNote = indexSchema.indexNotes.find(note => note.note.path === activeFile.path);
+                
+                if (activeIndexNote) {
+                    try {
+                        console.log("Updating active file:", activeFile.path);
+                        const indexBlocks = activeIndexNote.createIndexBlocks(indexSchema.rootNode);
+                        
+                        const content = await this.app.vault.read(activeFile);
+                        const updatedContent = activeIndexNote.getUpdatedContent(content, indexBlocks);
+                        
+                        if (content !== updatedContent) {
+                            await this.app.vault.modify(activeFile, updatedContent);
+                            console.log("Updated active file " + activeFile.path + " in " + (Date.now() - t0) + " ms");
+                        } else {
+                            console.log("No changes needed for " + activeFile.path);
+                        }
+                    } catch (error) {
+                        console.error("Error updating active file:", error);
+                    }
+                    return;
+                }
             }
+            
+            // If no active file or active file is not an index note, update all files
+            // Use a for...of loop to process files sequentially to avoid race conditions
+            for (const indexNote of indexSchema.indexNotes) {
+                try {
+                    const indexBlocks = indexNote.createIndexBlocks(indexSchema.rootNode);
+                    
+                    const content = await this.app.vault.read(indexNote.note);
+                    const updatedContent = indexNote.getUpdatedContent(content, indexBlocks);
+                    
+                    // Only modify if there are actual changes
+                    if (content !== updatedContent) {
+                        await this.app.vault.modify(indexNote.note, updatedContent);
+                    }
+                } catch (error) {
+                    console.error("Error updating note:", indexNote.note.path, error);
+                }
+            }
+        } catch (error) {
+            console.error("Error in updateAsync:", error);
         }
-        
-        // If no active file or active file is not an index note, update all files
-        indexSchema.indexNotes.forEach(indexNote => {
-            const indexBlocks = indexNote.createIndexBlocks(indexSchema.rootNode);
-            this.app.vault.process(indexNote.note, data => {
-                return indexNote.getUpdatedContent(data, indexBlocks);
-            });
+    }
+
+    update(): void {
+        this.updateAsync().catch(error => {
+            console.error("Unhandled error in update:", error);
         });
-        // console.log("Updating took " + (Date.now() - t0) + " ms");
     }
 }
