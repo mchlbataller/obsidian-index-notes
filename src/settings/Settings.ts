@@ -10,6 +10,9 @@ export interface IndexNotesSettings {
     priority_tag: string;
     show_note_title: boolean;
     metadata_template: string;
+    use_callout_blocks: boolean;
+    use_heading_for_index: boolean;
+    heading_level: number;
 }
 
 export const DEFAULT_SETTINGS: IndexNotesSettings = {
@@ -19,7 +22,10 @@ export const DEFAULT_SETTINGS: IndexNotesSettings = {
     meta_index_tag: 'meta_idx',
     priority_tag: '',
     show_note_title: true,
-    metadata_template: 'date_created: {{today}}\ntags: {{tags}}'
+    metadata_template: 'date_created: {{today}}\ntags: {{tags}}',
+    use_callout_blocks: false,
+    use_heading_for_index: true,
+    heading_level: 1
 }
 
 export class IndexNotesSettingTab extends PluginSettingTab {
@@ -37,6 +43,7 @@ export class IndexNotesSettingTab extends PluginSettingTab {
         this.add_priority_tag_setting();
         this.add_update_interval_setting();
         this.add_show_note_title();
+        this.add_index_format_settings();
         this.add_exclude_folders_setting();
         this.add_metadata_template();
     }
@@ -120,6 +127,56 @@ export class IndexNotesSettingTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     } catch (error) {
                         console.error("Failed to save show note title setting:", error);
+                    }
+                }));
+    }
+
+    add_index_format_settings() {
+        new Setting(this.containerEl)
+            .setName('Index formatting')
+            .setHeading();
+
+        new Setting(this.containerEl)
+            .setName('Use callout blocks for indices')
+            .setDesc('When enabled, indices will be formatted as callout blocks. When disabled, they will be formatted as plain lists.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.use_callout_blocks)
+                .onChange(async (value) => {
+                    try {
+                        this.plugin.settings.use_callout_blocks = value;
+                        await this.plugin.saveSettings();
+                    } catch (error) {
+                        console.error("Failed to save callout blocks setting:", error);
+                    }
+                }));
+
+        new Setting(this.containerEl)
+            .setName('Use heading for index title')
+            .setDesc('When enabled, index titles will be formatted as headings. When disabled, they will be part of the block.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.use_heading_for_index)
+                .onChange(async (value) => {
+                    try {
+                        this.plugin.settings.use_heading_for_index = value;
+                        await this.plugin.saveSettings();
+                    } catch (error) {
+                        console.error("Failed to save use heading setting:", error);
+                    }
+                }));
+
+        new Setting(this.containerEl)
+            .setName('Heading level')
+            .setDesc('The heading level to use for index titles when headings are enabled (1-6).')
+            .addSlider(slider => slider
+                .setLimits(1, 6, 1)
+                .setValue(this.plugin.settings.heading_level)
+                .setDynamicTooltip()
+                .onChange(async (value) => {
+                    try {
+                        this.plugin.settings.heading_level = value;
+                        await this.plugin.saveSettings();
+                    } catch (error) {
+                        console.error("Failed to save heading level setting:", error);
                     }
                 }));
     }

@@ -58,7 +58,8 @@ function tagToBlockReference(tag: string = "main-index"): string {
 }
 
 function getBlockRegex(blockRef: string): RegExp {
-    return new RegExp(`^(?:>\\s*\\[!example\\].*\\n)(?:>.*\\n)*(?:>\\s*\\${blockRef}$)`, "gm");
+    // Match both callout block format and standard heading format
+    return new RegExp(`(?:^(?:>\\s*\\[!example\\].*\\n)(?:>.*\\n)*(?:>\\s*\\${blockRef}$))|(?:^#+\\s+.*\\n(?:(?!^#)[\\s\\S])*?${blockRef})`, "gm");
 }
 
 function filenameToHeader(filename: string): string {
@@ -249,16 +250,41 @@ class IndexNote {
     createIndexBlocks(rootNode: Node): Array<[string, string]> {
         this.sortIndexTags();
         const indexBlocks: Array<[string, string]> = [];
+        
+        // Generate heading markers based on settings
+        const headingPrefix = this.settings.use_heading_for_index ? 
+            '#'.repeat(this.settings.heading_level) + ' ' : '';
+        
         this.indexTags.forEach(indexTag => {
-            let blockText = `> [!example] ${this.makeIndexTitle(indexTag, "")}`;
-            const sourceNote = rootNode.findChildNode(indexTag);
-            if (sourceNote) {
-                blockText += sourceNote.getIndex(this.note);
+            let blockText = '';
+            const title = this.makeIndexTitle(indexTag, "");
+            
+            if (this.settings.use_callout_blocks) {
+                // Callout block format
+                blockText = `> [!example] ${title}`;
+                const sourceNote = rootNode.findChildNode(indexTag);
+                if (sourceNote) {
+                    blockText += sourceNote.getIndex(this.note);
+                }
+                const blockReference = tagToBlockReference(indexTag);
+                blockText += `> \n> ${blockReference}`;
+            } else {
+                // Plain list format
+                blockText = `${headingPrefix}${title}`;
+                const sourceNote = rootNode.findChildNode(indexTag);
+                if (sourceNote) {
+                    // Remove the '>' prefix from each line for regular indexes
+                    const indexContent = sourceNote.getIndex(this.note);
+                    blockText += indexContent.replace(/^> /gm, '');
+                }
+                const blockReference = tagToBlockReference(indexTag);
+                blockText += `${blockReference}`;
             }
-            const blockReference = tagToBlockReference(indexTag);
-            blockText += `> \n> ${blockReference}`;
-            indexBlocks.push([blockReference, blockText]);
+            
+            indexBlocks.push([tagToBlockReference(indexTag), blockText]);
         });
+        
+        // Meta index blocks are always in callout format
         this.metaIndexTags.forEach(indexTag => {
             let blockText = `> [!example] ${this.makeIndexTitle(indexTag, indexTag ? "Meta-index of: " : "Meta-index")}`;
             const sourceNote = rootNode.findChildNode(indexTag);
@@ -269,6 +295,7 @@ class IndexNote {
             blockText += `> \n> ${blockReference}`;
             indexBlocks.push([blockReference, blockText]);
         });
+        
         return indexBlocks;
     }
 
