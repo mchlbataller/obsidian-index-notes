@@ -43,7 +43,6 @@ export class IndexNotesSettingTab extends PluginSettingTab {
         this.add_index_tag_setting();
         this.add_meta_index_tag_setting();
         this.add_priority_tag_setting();
-        this.add_update_interval_setting();
         this.add_show_note_title();
         this.add_index_format_settings();
         this.add_exclude_folders_setting();
@@ -96,25 +95,6 @@ export class IndexNotesSettingTab extends PluginSettingTab {
                         console.error("Failed to save priority tag setting:", error);
                     }
                 }));
-    }
-
-    add_update_interval_setting() {
-        new Setting(this.containerEl)
-            .setName('Update interval (in seconds)')
-            .setDesc("How often to scan the vault and update indices.")
-            .addSlider(slider => slider
-                .setLimits(1, 30, 1)
-                .setValue(this.plugin.settings.update_interval_seconds)
-                .setDynamicTooltip()
-                .onChange(async (value) => {
-                    try {
-                        this.plugin.settings.update_interval_seconds = value;
-                        await this.plugin.saveSettings();
-                        this.plugin.reset_update_interval();
-                    } catch (error) {
-                        console.error("Failed to save update interval setting:", error);
-                    }
-                }))
     }
 
     add_show_note_title() {

@@ -16,9 +16,39 @@ export default class IndexNotesPlugin extends Plugin {
 		await this.loadSettings();
 
 		this.index_updater = new IndexUpdater(this.app, this.settings);
-		this.index_updater.update();
-		this.reset_update_interval();
 
+		// Remove these two lines:
+		// this.index_updater.update();
+		// this.reset_update_interval();
+		
+		// Add event listener for file opens
+		this.registerEvent(
+			this.app.workspace.on('file-open', (file) => {
+				if (!file) return;
+				
+				// Get file metadata
+				const metadata = this.app.metadataCache.getFileCache(file);
+				console.log("index_tag: file opened", file.path, metadata);
+				if (!metadata || !metadata.frontmatter) return;
+				
+				const tags = metadata.frontmatter.tags || [];
+
+				console.log("index_tag: found tags", tags);
+				console.log("index_tag: settings", this.settings.index_tag, this.settings.meta_index_tag);
+				// Check if any tags have "idx" in them
+				const hasIdxTags: boolean = tags.some((tag: string) => tag.includes(this.settings.index_tag));
+				console.log("index_tag: has idx tags:", hasIdxTags);
+				
+				// Check if this file has index tags
+				if (tags.some((tag: string) => tag.includes(this.settings.index_tag) || 
+					tag.includes(this.settings.meta_index_tag))) {
+					// Only update when an index note is opened
+					console.log("Index note opened, updating index");
+					this.index_updater.update();
+				}
+			})
+		);
+	
 		this.addSettingTab(new IndexNotesSettingTab(this.app, this));
 
 		this.addCommand({
@@ -35,21 +65,12 @@ export default class IndexNotesPlugin extends Plugin {
 		});
 	}
 
-	onunload() {
-		window.clearInterval(this.update_interval_id);
-	}
-
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
-	}
-
-	reset_update_interval() {
-		window.clearInterval(this.update_interval_id);
-		this.update_interval_id = window.setInterval(() => this.index_updater.update(), this.settings.update_interval_seconds * 1000);
 	}
 
 	async createFileWithContentAndOpen(newFilePath: string, fileContent: string, metadata: Object) {
