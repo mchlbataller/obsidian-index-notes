@@ -1,205 +1,225 @@
-import { Plugin, Modal, App, Setting } from 'obsidian';
-import { DEFAULT_SETTINGS, IndexNotesSettings, IndexNotesSettingTab } from 'src/settings/Settings';
-import { IndexUpdater } from 'src/indexer';
+import { Plugin, Modal, App, Setting } from "obsidian";
+import {
+  DEFAULT_SETTINGS,
+  IndexNotesSettings,
+  IndexNotesSettingTab,
+} from "src/settings/Settings";
+import { IndexUpdater } from "src/indexer";
 import dateFormat from "dateformat";
-import YAML from 'yaml'
+import YAML from "yaml";
 
 const DATE_FORMAT = "yyyy-mm-dd";
 const MARKDOWN_EXTENSION = ".md";
 
 export default class IndexNotesPlugin extends Plugin {
-	settings: IndexNotesSettings;
-	update_interval_id: NodeJS.Timeout | null = null;
-	index_updater: IndexUpdater;
+  settings: IndexNotesSettings;
+  index_updater: IndexUpdater;
 
-	async onload() {
-		await this.loadSettings();
+  async onload() {
+    await this.loadSettings();
 
-		this.index_updater = new IndexUpdater(this.app, this.settings);
+    this.index_updater = new IndexUpdater(this.app, this.settings);
 
-		// Setup the update interval if auto-update is enabled
-		this.reset_update_interval();
-		
-		// Add event listener for file opens
-		this.registerEvent(
-			this.app.workspace.on('file-open', (file) => {
-				if (!file) return;
-				
-				// Get file metadata
-				const metadata = this.app.metadataCache.getFileCache(file);
-				console.log("index_tag: file opened", file.path, metadata);
-				if (!metadata || !metadata.frontmatter) return;
-				
-				const tags = metadata.frontmatter.tags || [];
+    if (this.settings.enable_auto_update) {
+      // Setup the update interval if auto-update is enabled
+      this.reset_update_interval();
+    } else {
+      // Add event listener for file opens
+      this.registerEvent(
+        this.app.workspace.on("file-open", (file) => {
+          if (!file) return;
 
-				console.log("index_tag: found tags", tags);
-				console.log("index_tag: settings", this.settings.index_tag, this.settings.meta_index_tag);
-				// Check if any tags have "idx" in them
-				const hasIdxTags: boolean = tags.some((tag: string) => tag.includes(this.settings.index_tag));
-				console.log("index_tag: has idx tags:", hasIdxTags);
-				
-				// Check if this file has index tags
-				if (tags.some((tag: string) => tag.includes(this.settings.index_tag) || 
-					tag.includes(this.settings.meta_index_tag))) {
-					// Only update when an index note is opened
-					console.log("Index note opened, updating index");
-					this.index_updater.update();
-				}
-			})
-		);
-	
-		this.addSettingTab(new IndexNotesSettingTab(this.app, this));
+          // Get file metadata
+          const metadata = this.app.metadataCache.getFileCache(file);
+          console.log("index_tag: file opened", file.path, metadata);
+          if (!metadata || !metadata.frontmatter) return;
 
-		this.addCommand({
-			id: 'new-note-same-loc-and-tags',
-			name: 'New note with same location and tags',
-			callback: async () => {
-				await this.newNoteFromFocusedFile();
-			}
-		});
+          const tags = metadata.frontmatter.tags || [];
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('copy-plus', 'New note by copying metadata of focused note', async () => {
-			await this.newNoteFromFocusedFile();
-		});
-	}
+          console.log("index_tag: found tags", tags);
+          console.log(
+            "index_tag: settings",
+            this.settings.index_tag,
+            this.settings.meta_index_tag
+          );
+          // Check if any tags have "idx" in them
+          const hasIdxTags: boolean = tags.some((tag: string) =>
+            tag.includes(this.settings.index_tag)
+          );
+          console.log("index_tag: has idx tags:", hasIdxTags);
 
-	onunload() {
-		// Clean up the interval when plugin is disabled
-		this.clear_update_interval();
-	}
+          // Check if this file has index tags
+          if (
+            tags.some(
+              (tag: string) =>
+                tag.includes(this.settings.index_tag) ||
+                tag.includes(this.settings.meta_index_tag)
+            )
+          ) {
+            // Only update when an index note is opened
+            console.log("Index note opened, updating index");
+            this.index_updater.update();
+          }
+        })
+      );
+    }
 
-	reset_update_interval(): void {
-		// Clear any existing interval
-		this.clear_update_interval();
-		
-		// Only set up a new interval if auto-update is enabled
-		if (this.settings.enable_auto_update) {
-			const interval_ms = this.settings.update_interval_seconds * 1000;
-			this.update_interval_id = setInterval(() => {
-				console.log("Auto-update interval triggered");
-				this.index_updater.update();
-			}, interval_ms);
-			console.log(`Set up auto-update interval: ${this.settings.update_interval_seconds} seconds`);
-		} else {
-			console.log("Auto-update disabled, only active files will be updated");
-		}
-	}
+    this.addSettingTab(new IndexNotesSettingTab(this.app, this));
 
-	clear_update_interval(): void {
-		if (this.update_interval_id) {
-			clearInterval(this.update_interval_id);
-			this.update_interval_id = null;
-			console.log("Cleared auto-update interval");
-		}
-	}
+    this.addCommand({
+      id: "new-note-same-loc-and-tags",
+      name: "New note with same location and tags",
+      callback: async () => {
+        await this.newNoteFromFocusedFile();
+      },
+    });
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-	}
+    // This creates an icon in the left ribbon.
+    const ribbonIconEl = this.addRibbonIcon(
+      "copy-plus",
+      "New note by copying metadata of focused note",
+      async () => {
+        await this.newNoteFromFocusedFile();
+      }
+    );
+  }
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
+  onunload() {
+    // No need for clear_update_interval as registerInterval handles cleanup
+  }
 
-	async createFileWithContentAndOpen(newFilePath: string, fileContent: string, metadata: Object) {
-		try {
-			let new_file = await this.app.vault.create(newFilePath, fileContent);
-			await this.app.workspace.getLeaf(true).openFile(new_file, {
-				active: true,
-				state: {
-					mode: "source"
-				},
-			});
+  reset_update_interval(): void {
+    // Only set up the interval if auto-update is enabled
+    if (this.settings.enable_auto_update) {
+      const interval_ms = this.settings.update_interval_seconds * 1000;
 
-			await this.app.fileManager.processFrontMatter(new_file, fm => {
-				for (const [key, value] of Object.entries(metadata)) {
-					fm[key] = value;
-				}
-				return fm;
-			});
-		} catch (error) {
-			console.error("Error creating or processing new file:", error);
-		}
-	}
+      // Use registerInterval instead of setInterval
+      this.registerInterval(
+        window.setInterval(() => {
+          console.log("Auto-update interval triggered");
+          this.index_updater.update();
+        }, interval_ms)
+      );
+      console.log(
+        `Set up auto-update interval: ${this.settings.update_interval_seconds} seconds`
+      );
+    } else {
+      console.log("Auto-update disabled, only active files will be updated");
+    }
+  }
 
-	async newNoteFromFocusedFile() {
-		let ref_file = this.app.workspace.activeEditor?.file;
-		if (!ref_file) {
-			return;
-		}
+  async loadSettings() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  }
 
-		let current_filepath = ref_file.path;
-		let parent_dir = ref_file.parent?.path;
-		let metadata_cache = this.app.metadataCache.getCache(current_filepath);
-		let file_tags: string[] = [];
-		if (metadata_cache?.frontmatter) {
-			file_tags = metadata_cache.frontmatter.tags;
-			file_tags = file_tags.filter(t => t !== this.settings.index_tag);
-		}
+  async saveSettings() {
+    await this.saveData(this.settings);
+  }
 
-		let now = new Date();
-		let new_file_metadata: Object;
-		try {
-			new_file_metadata = YAML.parse(this.settings.metadata_template
-				.replace("{{today}}", dateFormat(now, DATE_FORMAT))
-				.replace("{{tags}}", file_tags.join(', '))
-			);
-		} catch (error) {
-			console.error("Error parsing YAML metadata:", error);
-			return;
-		}
+  async createFileWithContentAndOpen(
+    newFilePath: string,
+    fileContent: string,
+    metadata: Object
+  ) {
+    try {
+      let new_file = await this.app.vault.create(newFilePath, fileContent);
+      await this.app.workspace.getLeaf(true).openFile(new_file, {
+        active: true,
+        state: {
+          mode: "source",
+        },
+      });
 
-		new PromptModal(this.app, "New note title", async (result) => {
-			let new_file_path = `${parent_dir}/${result}${MARKDOWN_EXTENSION}`;
-			try {
-				this.createFileWithContentAndOpen(new_file_path, "", new_file_metadata);
-			} catch (error) {
-				console.error("Error creating and opening file:", error);
-			}
-		}).open();
-	}
+      await this.app.fileManager.processFrontMatter(new_file, (fm) => {
+        for (const [key, value] of Object.entries(metadata)) {
+          fm[key] = value;
+        }
+        return fm;
+      });
+    } catch (error) {
+      console.error("Error creating or processing new file:", error);
+    }
+  }
+
+  async newNoteFromFocusedFile() {
+    let ref_file = this.app.workspace.activeEditor?.file;
+    if (!ref_file) {
+      return;
+    }
+
+    let current_filepath = ref_file.path;
+    let parent_dir = ref_file.parent?.path;
+    let metadata_cache = this.app.metadataCache.getCache(current_filepath);
+    let file_tags: string[] = [];
+    if (metadata_cache?.frontmatter) {
+      file_tags = metadata_cache.frontmatter.tags;
+      file_tags = file_tags.filter((t) => t !== this.settings.index_tag);
+    }
+
+    let now = new Date();
+    let new_file_metadata: Object;
+    try {
+      new_file_metadata = YAML.parse(
+        this.settings.metadata_template
+          .replace("{{today}}", dateFormat(now, DATE_FORMAT))
+          .replace("{{tags}}", file_tags.join(", "))
+      );
+    } catch (error) {
+      console.error("Error parsing YAML metadata:", error);
+      return;
+    }
+
+    new PromptModal(this.app, "New note title", async (result) => {
+      let new_file_path = `${parent_dir}/${result}${MARKDOWN_EXTENSION}`;
+      try {
+        this.createFileWithContentAndOpen(new_file_path, "", new_file_metadata);
+      } catch (error) {
+        console.error("Error creating and opening file:", error);
+      }
+    }).open();
+  }
 }
 
 class PromptModal extends Modal {
-	result: string;
-	prompt: string;
-	onSubmit: (result: string) => void;
+  result: string;
+  prompt: string;
+  onSubmit: (result: string) => void;
 
-	constructor(app: App, prompt: string, onSubmit: (result: string) => void) {
-		super(app);
-		this.prompt = prompt;
-		this.onSubmit = onSubmit;
-	}
+  constructor(app: App, prompt: string, onSubmit: (result: string) => void) {
+    super(app);
+    this.prompt = prompt;
+    this.onSubmit = onSubmit;
+  }
 
-	onOpen() {
-		try {
-			this.titleEl.innerText = this.prompt;
+  onOpen() {
+    try {
+      this.titleEl.innerText = this.prompt;
 
-			let settingEl = new Setting(this.contentEl)
-				.addText((text) => {
-					text.onChange((value) => {
-						this.result = value;
-					});
-					text.setPlaceholder("");
-					text.inputEl.addEventListener("keydown", (evt) => this.enterCallback(evt));
-					text.inputEl.addClass("index-notes-prompt-modal-input");
-				});
-			settingEl.infoEl.remove();
-			settingEl.settingEl.focus();
-		} catch (error) {
-			console.error("Error setting up modal elements:", error);
-		}
-	}
+      let settingEl = new Setting(this.contentEl).addText((text) => {
+        text.onChange((value) => {
+          this.result = value;
+        });
+        text.setPlaceholder("");
+        text.inputEl.addEventListener("keydown", (evt) =>
+          this.enterCallback(evt)
+        );
+        text.inputEl.addClass("index-notes-prompt-modal-input");
+      });
+      settingEl.infoEl.remove();
+      settingEl.settingEl.focus();
+    } catch (error) {
+      console.error("Error setting up modal elements:", error);
+    }
+  }
 
-	enterCallback(evt: any) {
-		try {
-			if (evt.key === "Enter" && this.result.length) {
-				this.close();
-				this.onSubmit(this.result);
-			}
-		} catch (error) {
-			console.error("Error handling enter key press:", error);
-		}
-	}
+  enterCallback(evt: any) {
+    try {
+      if (evt.key === "Enter" && this.result.length) {
+        this.close();
+        this.onSubmit(this.result);
+      }
+    } catch (error) {
+      console.error("Error handling enter key press:", error);
+    }
+  }
 }

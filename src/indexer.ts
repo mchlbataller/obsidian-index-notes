@@ -797,7 +797,7 @@ export class IndexUpdater {
 
       // Wait for scan to complete fully
       this.scan().then(async (indexSchema) => {
-        if (activeFile) {
+        if (activeFile && !this.settings.enable_auto_update) {
           // Only process the active file if it's in the index notes
           const activeIndexNote = indexSchema.indexNotes.find(
             (note) => note.note.path === activeFile.path
