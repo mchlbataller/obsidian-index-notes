@@ -4,6 +4,7 @@ import { FolderSuggest } from "./FolderSuggester";
 
 export interface IndexNotesSettings {
     update_interval_seconds: number;
+    enable_auto_update: boolean;
     exclude_folders: string[];
     index_tag: string;
     meta_index_tag: string;
@@ -19,6 +20,7 @@ export interface IndexNotesSettings {
 
 export const DEFAULT_SETTINGS: IndexNotesSettings = {
     update_interval_seconds: 5,
+    enable_auto_update: false,
     exclude_folders: [],
     index_tag: 'idx',
     meta_index_tag: 'meta_idx',
@@ -46,6 +48,7 @@ export class IndexNotesSettingTab extends PluginSettingTab {
         this.add_meta_index_tag_setting();
         this.add_priority_tag_setting();
         this.add_show_note_title();
+        this.add_update_settings();
         this.add_index_format_settings();
         this.add_exclude_folders_setting();
         this.add_metadata_template();
@@ -111,6 +114,47 @@ export class IndexNotesSettingTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     } catch (error) {
                         console.error("Failed to save show note title setting:", error);
+                    }
+                }));
+    }
+
+    add_update_settings() {
+        new Setting(this.containerEl)
+            .setName('Update behavior')
+            .setHeading();
+            
+        new Setting(this.containerEl)
+            .setName('Enable automatic updates')
+            .setDesc('When enabled, indices will be updated periodically in the background. When disabled, only the active file is updated.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.enable_auto_update)
+                .onChange(async (value) => {
+                    try {
+                        this.plugin.settings.enable_auto_update = value;
+                        await this.plugin.saveSettings();
+                        // Trigger plugin to reset its update interval
+                        this.plugin.reset_update_interval();
+                    } catch (error) {
+                        console.error("Failed to save auto update setting:", error);
+                    }
+                }));
+
+        new Setting(this.containerEl)
+            .setName('Update interval (seconds)')
+            .setDesc('How often indices should be updated when automatic updates are enabled.')
+            .addSlider(slider => slider
+                .setLimits(1, 60, 1)
+                .setValue(this.plugin.settings.update_interval_seconds)
+                .setDynamicTooltip()
+                .setDisabled(!this.plugin.settings.enable_auto_update)
+                .onChange(async (value) => {
+                    try {
+                        this.plugin.settings.update_interval_seconds = value;
+                        await this.plugin.saveSettings();
+                        // Trigger plugin to reset its update interval with new value
+                        this.plugin.reset_update_interval();
+                    } catch (error) {
+                        console.error("Failed to save update interval setting:", error);
                     }
                 }));
     }

@@ -9,7 +9,7 @@ const MARKDOWN_EXTENSION = ".md";
 
 export default class IndexNotesPlugin extends Plugin {
 	settings: IndexNotesSettings;
-	update_interval_id: number;
+	update_interval_id: NodeJS.Timeout | null = null;
 	index_updater: IndexUpdater;
 
 	async onload() {
@@ -17,9 +17,8 @@ export default class IndexNotesPlugin extends Plugin {
 
 		this.index_updater = new IndexUpdater(this.app, this.settings);
 
-		// Remove these two lines:
-		// this.index_updater.update();
-		// this.reset_update_interval();
+		// Setup the update interval if auto-update is enabled
+		this.reset_update_interval();
 		
 		// Add event listener for file opens
 		this.registerEvent(
@@ -63,6 +62,36 @@ export default class IndexNotesPlugin extends Plugin {
 		const ribbonIconEl = this.addRibbonIcon('copy-plus', 'New note by copying metadata of focused note', async () => {
 			await this.newNoteFromFocusedFile();
 		});
+	}
+
+	onunload() {
+		// Clean up the interval when plugin is disabled
+		this.clear_update_interval();
+	}
+
+	reset_update_interval(): void {
+		// Clear any existing interval
+		this.clear_update_interval();
+		
+		// Only set up a new interval if auto-update is enabled
+		if (this.settings.enable_auto_update) {
+			const interval_ms = this.settings.update_interval_seconds * 1000;
+			this.update_interval_id = setInterval(() => {
+				console.log("Auto-update interval triggered");
+				this.index_updater.update();
+			}, interval_ms);
+			console.log(`Set up auto-update interval: ${this.settings.update_interval_seconds} seconds`);
+		} else {
+			console.log("Auto-update disabled, only active files will be updated");
+		}
+	}
+
+	clear_update_interval(): void {
+		if (this.update_interval_id) {
+			clearInterval(this.update_interval_id);
+			this.update_interval_id = null;
+			console.log("Cleared auto-update interval");
+		}
 	}
 
 	async loadSettings() {
