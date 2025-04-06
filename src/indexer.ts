@@ -84,7 +84,7 @@ function getMarkerBlockRegex(): RegExp {
 }
 
 function filenameToHeader(filename: string): string {
-  return capitalizeFirst(filename.split(".")[0]);
+  return filename.split(".")[0];
 }
 
 function getLastTagComponent(tagPath: string): string {
