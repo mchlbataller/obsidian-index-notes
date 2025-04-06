@@ -795,7 +795,7 @@ export class IndexUpdater {
       // Check if there's an active file in the editor
       const activeFile = this.app.workspace.getActiveFile();
 
-      // Wait for scan to complete fully
+      // Start the scan process, but don't block waiting for it
       this.scan().then(async (indexSchema) => {
         if (activeFile && !this.settings.enable_auto_update) {
           // Only process the active file if it's in the index notes
@@ -835,31 +835,51 @@ export class IndexUpdater {
           }
         }
 
-        // If no active file or active file is not an index note, update all files
-        // Use a for...of loop to process files sequentially to avoid race conditions
-        for (const indexNote of indexSchema.indexNotes) {
-          try {
-            const indexBlocks = indexNote.createIndexBlocks(
-              indexSchema.rootNode
-            );
-
-            const content = await this.app.vault.read(indexNote.note);
-            const updatedContent = indexNote.getUpdatedContent(
-              content,
-              indexBlocks
-            );
-
-            // Only modify if there are actual changes
-            if (content !== updatedContent) {
-              await this.app.vault.modify(indexNote.note, updatedContent);
-            }
-          } catch (error) {
-            console.error("Error updating note:", indexNote.note.path, error);
-          }
-        }
+        // For auto-update or when active file isn't an index, process all files
+        // Make this non-blocking by processing files in small batches with timeouts between
+        await this.processIndexNotesInBatches(indexSchema.indexNotes, indexSchema.rootNode);
       });
+      
+      // Don't wait for the promise to resolve - return immediately
+      return Promise.resolve();
     } catch (error) {
       console.error("Error in updateAsync:", error);
+      return Promise.resolve(); // Still resolve the promise to maintain non-blocking behavior
+    }
+  }
+
+  /**
+   * Process index notes in small batches to avoid blocking the UI thread
+   */
+  async processIndexNotesInBatches(indexNotes: IndexNote[], rootNode: Node, batchSize: number = 5): Promise<void> {
+    // Clone the array to avoid modifying the original
+    const notesToProcess = [...indexNotes];
+    
+    // Process notes in batches
+    while (notesToProcess.length > 0) {
+      // Take a batch of notes
+      const batch = notesToProcess.splice(0, batchSize);
+      
+      // Process this batch
+      for (const indexNote of batch) {
+        try {
+          const indexBlocks = indexNote.createIndexBlocks(rootNode);
+          const content = await this.app.vault.read(indexNote.note);
+          const updatedContent = indexNote.getUpdatedContent(content, indexBlocks);
+          
+          // Only modify if there are actual changes
+          if (content !== updatedContent) {
+            await this.app.vault.modify(indexNote.note, updatedContent);
+          }
+        } catch (error) {
+          console.error("Error updating note:", indexNote.note.path, error);
+        }
+      }
+      
+      // If there are more notes to process, wait a short time to let UI update
+      if (notesToProcess.length > 0) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
     }
   }
 

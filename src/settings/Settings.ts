@@ -16,6 +16,7 @@ export interface IndexNotesSettings {
     heading_level: number;
     omit_index_titles: boolean;
     hierarchical_indices: boolean;
+    granular_updates: boolean;
 }
 
 export const DEFAULT_SETTINGS: IndexNotesSettings = {
@@ -31,7 +32,8 @@ export const DEFAULT_SETTINGS: IndexNotesSettings = {
     use_heading_for_index: true,
     heading_level: 1,
     omit_index_titles: false,
-    hierarchical_indices: false
+    hierarchical_indices: false,
+    granular_updates: false,
 }
 
 export class IndexNotesSettingTab extends PluginSettingTab {
@@ -132,10 +134,23 @@ export class IndexNotesSettingTab extends PluginSettingTab {
                     try {
                         this.plugin.settings.enable_auto_update = value;
                         await this.plugin.saveSettings();
-                        // Trigger plugin to reset its update interval
-                        this.plugin.reset_update_interval();
                     } catch (error) {
                         console.error("Failed to save auto update setting:", error);
+                    }
+                }));
+        
+        new Setting(this.containerEl)
+            .setName('Granular updates')
+            .setDesc('When enabled, the plugin will only update the indices when changes are detected in the notes. When disabled, all indices will be updated every interval.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.granular_updates)
+                .setDisabled(!this.plugin.settings.enable_auto_update)
+                .onChange(async (value) => {
+                    try {
+                        this.plugin.settings.granular_updates = value;
+                        await this.plugin.saveSettings();
+                    } catch (error) {
+                        console.error("Failed to save granular updates setting:", error);
                     }
                 }));
 
@@ -146,13 +161,11 @@ export class IndexNotesSettingTab extends PluginSettingTab {
                 .setLimits(1, 60, 1)
                 .setValue(this.plugin.settings.update_interval_seconds)
                 .setDynamicTooltip()
-                .setDisabled(!this.plugin.settings.enable_auto_update)
+                .setDisabled(!this.plugin.settings.enable_auto_update || this.plugin.settings.granular_updates)
                 .onChange(async (value) => {
                     try {
                         this.plugin.settings.update_interval_seconds = value;
                         await this.plugin.saveSettings();
-                        // Trigger plugin to reset its update interval with new value
-                        this.plugin.reset_update_interval();
                     } catch (error) {
                         console.error("Failed to save update interval setting:", error);
                     }

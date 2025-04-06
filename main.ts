@@ -21,9 +21,59 @@ export default class IndexNotesPlugin extends Plugin {
     this.index_updater = new IndexUpdater(this.app, this.settings);
 
     if (this.settings.enable_auto_update) {
-      // Setup the update interval if auto-update is enabled
-      this.reset_update_interval();
+      if (this.settings.granular_updates) {
+        // Update the index notes when changes are made to the vault.
+        this.registerEvent(
+          this.app.vault.on("modify", (file) => {
+            if (!file) return;
+            // Get file metadata
+            this.index_updater.update();
+            console.log("index_tag: file modified", file.path);
+          })
+        );
+        this.registerEvent(
+          this.app.vault.on("delete", (file) => {
+            if (!file) return;
+            // Get file metadata
+            this.index_updater.update();
+            console.log("index_tag: file deleted", file.path);
+          })
+        );
+        this.registerEvent(
+          this.app.vault.on("rename", (file) => {
+            if (!file) return;
+            // Get file metadata
+            this.index_updater.update();
+            console.log("index_tag: file renamed", file.path);
+          })
+        );
+        this.registerEvent(
+          this.app.vault.on("create", (file) => {
+            if (!file) return;
+            // Get file metadata
+            this.index_updater.update();
+            console.log("index_tag: file created", file.path);
+          })
+        );
+      } else {
+        // Setup the update interval if auto-update is enabled
+        this.app.workspace.onLayoutReady(async () => {
+          const interval_ms = this.settings.update_interval_seconds * 1000;
+
+          // Use registerInterval instead of setInterval
+          this.registerInterval(
+            window.setInterval(() => {
+              console.log("Auto-update interval triggered");
+              this.index_updater.update();
+            }, interval_ms)
+          );
+          console.log(
+            `Set up auto-update interval: ${this.settings.update_interval_seconds} seconds`
+          );
+        });
+      }
     } else {
+      console.log("Auto-update is disabled. Only manual updates will occur.");
       // Add event listener for file opens
       this.registerEvent(
         this.app.workspace.on("file-open", (file) => {
@@ -86,26 +136,6 @@ export default class IndexNotesPlugin extends Plugin {
 
   onunload() {
     // No need for clear_update_interval as registerInterval handles cleanup
-  }
-
-  reset_update_interval(): void {
-    // Only set up the interval if auto-update is enabled
-    if (this.settings.enable_auto_update) {
-      const interval_ms = this.settings.update_interval_seconds * 1000;
-
-      // Use registerInterval instead of setInterval
-      this.registerInterval(
-        window.setInterval(() => {
-          console.log("Auto-update interval triggered");
-          this.index_updater.update();
-        }, interval_ms)
-      );
-      console.log(
-        `Set up auto-update interval: ${this.settings.update_interval_seconds} seconds`
-      );
-    } else {
-      console.log("Auto-update disabled, only active files will be updated");
-    }
   }
 
   async loadSettings() {
