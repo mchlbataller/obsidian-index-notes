@@ -84,6 +84,7 @@ function getMarkerBlockRegex(): RegExp {
 }
 
 function filenameToHeader(filename: string): string {
+  // Remove file extension (like .md) if present
   return filename.split(".")[0];
 }
 
@@ -170,7 +171,7 @@ class Node {
 
     // Add notes directly belonging to this node level
     const notesToInclude = this.priorityNotes
-      .concat(this.regularNotes, this.indexNotes)
+      .concat(this.regularNotes)
       .filter((note) => note.path !== indexNote.path);
     
     if (notesToInclude.length > 0) {
@@ -192,32 +193,81 @@ class Node {
         .join("");
     }
 
-    // For each child node, determine if we should show its contents or just link to it
+    // Process each child node
     this.children.forEach((child) => {
       const childHasIndex = child.hasOwnIndexNote();
       const useHierarchy = this.settings.hierarchical_indices;
-      
-      // Get the header note if available, or use the tag name
-      const headerText = child.headerNote
-        ? filenameToHeader(child.headerNote.name)
-        : tagToHeader(child.tagComponent());
-      
-      // Create a link if there's a header note
-      const mdLink = child.headerNote
-        ? this.app.fileManager.generateMarkdownLink(
-            child.headerNote,
+      const childIndexNotes = child.indexNotes.filter(note => note.path !== indexNote.path);
+
+      // Different behavior based on the number of index notes in the child
+      if (useHierarchy && childHasIndex) {
+        if (childIndexNotes.length === 1) {
+          // For exactly one index note, make the node itself link to the index
+          const singleIndexNote = childIndexNotes[0];
+          const headerText = child.headerNote 
+            ? filenameToHeader(child.headerNote.name)
+            : tagToHeader(child.tagComponent());
+          
+          const mdLink = this.app.fileManager.generateMarkdownLink(
+            singleIndexNote,
             indexNote.path,
             undefined,
             headerText
-          )
-        : headerText;
-      
-      // Always add the child header or link
-      indexTxt += `> ${"\t".repeat(indentLevel)}- **${mdLink}**\n`;
-      
-      // Only recursively include child content if not using hierarchy or if child has no index
-      if (!useHierarchy || !childHasIndex) {
-        indexTxt += child.getIndex(indexNote, indentLevel + 1);
+          );
+          indexTxt += `> ${"\t".repeat(indentLevel)}- **${mdLink}**\n`;
+        } else {
+          // For multiple index notes, show the node header and list index notes beneath it
+          const headerText = child.headerNote
+            ? filenameToHeader(child.headerNote.name)
+            : tagToHeader(child.tagComponent());
+          
+          // Create a link if there's a header note
+          const mdLink = child.headerNote
+            ? this.app.fileManager.generateMarkdownLink(
+                child.headerNote,
+                indexNote.path,
+                undefined,
+                headerText
+              )
+            : headerText;
+          
+          // Add the child header or link
+          indexTxt += `> ${"\t".repeat(indentLevel)}- **${mdLink}**\n`;
+          
+          // List all index notes
+          childIndexNotes.forEach((note) => {
+            const displayText = filenameToHeader(note.name);
+            const noteMdLink = this.app.fileManager.generateMarkdownLink(
+              note,
+              indexNote.path,
+              undefined,
+              displayText
+            );
+            indexTxt += `> ${"\t".repeat(indentLevel + 1)}- ${noteMdLink}\n`;
+          });
+        }
+      } else {
+        // Not in hierarchical mode or child doesn't have index
+        // Handle as before: show node and its full contents
+        const headerText = child.headerNote
+          ? filenameToHeader(child.headerNote.name)
+          : tagToHeader(child.tagComponent());
+        
+        const mdLink = child.headerNote
+          ? this.app.fileManager.generateMarkdownLink(
+              child.headerNote,
+              indexNote.path,
+              undefined,
+              headerText
+            )
+          : headerText;
+        
+        indexTxt += `> ${"\t".repeat(indentLevel)}- **${mdLink}**\n`;
+        
+        // Recursively include child content
+        if (!useHierarchy || !childHasIndex) {
+          indexTxt += child.getIndex(indexNote, indentLevel + 1);
+        }
       }
     });
 
