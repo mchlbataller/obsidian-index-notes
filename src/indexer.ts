@@ -40,6 +40,7 @@ function tagToHeader(t: string): string {
           if (word === "") {
             return "";
           }
+
           if (index > 0 && arr[index - 1] === "") {
             return formatTagWord("_" + word);
           }
@@ -48,7 +49,7 @@ function tagToHeader(t: string): string {
         .filter((word) => word !== "");
 
       // Only capitalize the first letter of the whole component, preserve case of other words
-      return words.map((word) => capitalizeFirst(word)).join(" ");
+      return words.join(" ");
     })
     .join(" / ");
 }
@@ -93,7 +94,6 @@ function getLastTagComponent(tagPath: string): string {
 function canonicalizeTag(tag: string): string {
   return tag
     .trim()
-    .toLowerCase()
     .replace(/^\/|\/$/g, "");
 }
 
