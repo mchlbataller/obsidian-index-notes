@@ -161,39 +161,64 @@ class Node {
     return getLastTagComponent(this.tagPath);
   }
 
-  getIndex(indexNote: TFile, indentLevel: number = 0): string {
-    let indexTxt = this.priorityNotes
-      .concat(this.regularNotes, this.indexNotes)
-      .filter((note) => note.path !== indexNote.path)
-      .map((note) => {
-        const mdLink = this.app.fileManager.generateMarkdownLink(
-          note,
-          indexNote.path,
-          undefined,
-          filenameToHeader(note.name)
-        );
-        const noteTitle = getNoteTitle(note, this.app, ": ");
-        return `> ${"\t".repeat(indentLevel)}- ${
-          this.priorityNotes.includes(note) ? "**" : ""
-        }${mdLink}${noteTitle}${
-          this.priorityNotes.includes(note) ? "**" : ""
-        }\n`;
-      })
-      .join("");
+  hasOwnIndexNote(): boolean {
+    return this.indexNotes.length > 0;
+  }
 
+  getIndex(indexNote: TFile, indentLevel: number = 0): string {
+    let indexTxt = "";
+
+    // Add notes directly belonging to this node level
+    const notesToInclude = this.priorityNotes
+      .concat(this.regularNotes, this.indexNotes)
+      .filter((note) => note.path !== indexNote.path);
+    
+    if (notesToInclude.length > 0) {
+      indexTxt += notesToInclude
+        .map((note) => {
+          const mdLink = this.app.fileManager.generateMarkdownLink(
+            note,
+            indexNote.path,
+            undefined,
+            filenameToHeader(note.name)
+          );
+          const noteTitle = getNoteTitle(note, this.app, ": ");
+          return `> ${"\t".repeat(indentLevel)}- ${
+            this.priorityNotes.includes(note) ? "**" : ""
+          }${mdLink}${noteTitle}${
+            this.priorityNotes.includes(note) ? "**" : ""
+          }\n`;
+        })
+        .join("");
+    }
+
+    // For each child node, determine if we should show its contents or just link to it
     this.children.forEach((child) => {
+      const childHasIndex = child.hasOwnIndexNote();
+      const useHierarchy = this.settings.hierarchical_indices;
+      
+      // Get the header note if available, or use the tag name
+      const headerText = child.headerNote
+        ? filenameToHeader(child.headerNote.name)
+        : tagToHeader(child.tagComponent());
+      
+      // Create a link if there's a header note
       const mdLink = child.headerNote
         ? this.app.fileManager.generateMarkdownLink(
             child.headerNote,
             indexNote.path,
             undefined,
-            filenameToHeader(child.headerNote.name)
+            headerText
           )
-        : "";
-      indexTxt += `> ${"\t".repeat(indentLevel)}- **${
-        mdLink || tagToHeader(child.tagComponent())
-      }**\n`;
-      indexTxt += child.getIndex(indexNote, indentLevel + 1);
+        : headerText;
+      
+      // Always add the child header or link
+      indexTxt += `> ${"\t".repeat(indentLevel)}- **${mdLink}**\n`;
+      
+      // Only recursively include child content if not using hierarchy or if child has no index
+      if (!useHierarchy || !childHasIndex) {
+        indexTxt += child.getIndex(indexNote, indentLevel + 1);
+      }
     });
 
     return indexTxt;

@@ -14,6 +14,7 @@ export interface IndexNotesSettings {
     use_heading_for_index: boolean;
     heading_level: number;
     omit_index_titles: boolean;
+    hierarchical_indices: boolean;
 }
 
 export const DEFAULT_SETTINGS: IndexNotesSettings = {
@@ -27,7 +28,8 @@ export const DEFAULT_SETTINGS: IndexNotesSettings = {
     use_callout_blocks: false,
     use_heading_for_index: true,
     heading_level: 1,
-    omit_index_titles: false
+    omit_index_titles: false,
+    hierarchical_indices: false
 }
 
 export class IndexNotesSettingTab extends PluginSettingTab {
@@ -143,6 +145,20 @@ export class IndexNotesSettingTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     } catch (error) {
                         console.error("Failed to save omit index titles setting:", error);
+                    }
+                }));
+
+        new Setting(this.containerEl)
+            .setName('Hierarchical Indices')
+            .setDesc('When enabled, parent indices will only link to child indices without showing their contents.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.hierarchical_indices)
+                .onChange(async (value) => {
+                    try {
+                        this.plugin.settings.hierarchical_indices = value;
+                        await this.plugin.saveSettings();
+                    } catch (error) {
+                        console.error("Failed to save hierarchical indices setting:", error);
                     }
                 }));
 
