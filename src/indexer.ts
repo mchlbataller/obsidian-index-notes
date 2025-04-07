@@ -609,7 +609,8 @@ class IndexNote {
       }
 
       // Clean up any excessive newlines that might have been created
-      mainContent = mainContent.replace(/\n{3,}/g, "\n\n");
+      // Commenting this out for now to avoid removing newlines that might be needed
+      // mainContent = mainContent.replace(/\n{3,}/g, "\n\n");
 
       // Add any blocks that weren't already in the document
       let result = mainContent;
@@ -630,7 +631,7 @@ class IndexNote {
       }
 
       // Put the frontmatter back at the beginning
-      return frontmatter + result.trim();
+      return frontmatter + result;
     } catch (error) {
       console.error("Error updating content:", error);
       return content; // Return original content on error
