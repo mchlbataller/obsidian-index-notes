@@ -93,9 +93,7 @@ function getLastTagComponent(tagPath: string): string {
 }
 
 function canonicalizeTag(tag: string): string {
-  return tag
-    .trim()
-    .replace(/^\/|\/$/g, "");
+  return tag.trim().replace(/^\/|\/$/g, "");
 }
 
 function getNoteTitle(note: TFile, app: App, prefix: string = ""): string {
@@ -171,9 +169,9 @@ class Node {
 
     // Add notes directly belonging to this node level
     const notesToInclude = this.priorityNotes
-      .concat(this.regularNotes)
+      .concat(this.regularNotes, this.indexNotes)
       .filter((note) => note.path !== indexNote.path);
-    
+
     if (notesToInclude.length > 0) {
       indexTxt += notesToInclude
         .map((note) => {
@@ -184,11 +182,32 @@ class Node {
             filenameToHeader(note.name)
           );
           const noteTitle = getNoteTitle(note, this.app, ": ");
-          return `> ${"\t".repeat(indentLevel)}- ${
-            this.priorityNotes.includes(note) ? "**" : ""
-          }${mdLink}${noteTitle}${
-            this.priorityNotes.includes(note) ? "**" : ""
-          }\n`;
+
+          // Format index notes in bold if bold_index_note_titles setting is enabled
+          const isIndexNote = this.settings.bold_index_note_titles
+            ? (() => {
+                const tags = this.app.metadataCache.getCache(note.path)?.frontmatter?.tags;
+                // Ensure tags is an array before calling filter and some
+                if (Array.isArray(tags)) {
+                  return tags
+                    .filter((tag) => tag !== null && tag !== undefined)
+                    .some((tag) => {
+                      return String(tag).includes("idx");
+                    });
+                } else if (typeof tags === 'string') {
+                  return tags.includes("idx");
+                }
+                return false;
+              })()
+            : false;
+          const boldStart =
+            this.priorityNotes.includes(note) || isIndexNote ? "**" : "";
+          const boldEnd =
+            this.priorityNotes.includes(note) || isIndexNote ? "**" : "";
+
+          return `> ${"\t".repeat(
+            indentLevel
+          )}- ${boldStart}${mdLink}${noteTitle}${boldEnd}\n`;
         })
         .join("");
     }
@@ -197,17 +216,19 @@ class Node {
     this.children.forEach((child) => {
       const childHasIndex = child.hasOwnIndexNote();
       const useHierarchy = this.settings.hierarchical_indices;
-      const childIndexNotes = child.indexNotes.filter(note => note.path !== indexNote.path);
+      const childIndexNotes = child.indexNotes.filter(
+        (note) => note.path !== indexNote.path
+      );
 
       // Different behavior based on the number of index notes in the child
       if (useHierarchy && childHasIndex) {
         if (childIndexNotes.length === 1) {
           // For exactly one index note, make the node itself link to the index
           const singleIndexNote = childIndexNotes[0];
-          const headerText = child.headerNote 
+          const headerText = child.headerNote
             ? filenameToHeader(child.headerNote.name)
             : tagToHeader(child.tagComponent());
-          
+
           const mdLink = this.app.fileManager.generateMarkdownLink(
             singleIndexNote,
             indexNote.path,
@@ -220,7 +241,7 @@ class Node {
           const headerText = child.headerNote
             ? filenameToHeader(child.headerNote.name)
             : tagToHeader(child.tagComponent());
-          
+
           // Create a link if there's a header note
           const mdLink = child.headerNote
             ? this.app.fileManager.generateMarkdownLink(
@@ -230,11 +251,11 @@ class Node {
                 headerText
               )
             : headerText;
-          
+
           // Add the child header or link
           indexTxt += `> ${"\t".repeat(indentLevel)}- **${mdLink}**\n`;
-          
-          // List all index notes
+
+          // List all index notes (all in bold since they are index notes)
           childIndexNotes.forEach((note) => {
             const displayText = filenameToHeader(note.name);
             const noteMdLink = this.app.fileManager.generateMarkdownLink(
@@ -243,7 +264,9 @@ class Node {
               undefined,
               displayText
             );
-            indexTxt += `> ${"\t".repeat(indentLevel + 1)}- ${noteMdLink}\n`;
+            indexTxt += `> ${"\t".repeat(
+              indentLevel + 1
+            )}- **${noteMdLink}**\n`;
           });
         }
       } else {
@@ -252,7 +275,7 @@ class Node {
         const headerText = child.headerNote
           ? filenameToHeader(child.headerNote.name)
           : tagToHeader(child.tagComponent());
-        
+
         const mdLink = child.headerNote
           ? this.app.fileManager.generateMarkdownLink(
               child.headerNote,
@@ -261,9 +284,9 @@ class Node {
               headerText
             )
           : headerText;
-        
+
         indexTxt += `> ${"\t".repeat(indentLevel)}- **${mdLink}**\n`;
-        
+
         // Recursively include child content
         if (!useHierarchy || !childHasIndex) {
           indexTxt += child.getIndex(indexNote, indentLevel + 1);
@@ -555,23 +578,27 @@ class IndexNote {
       // Track if we've updated each type of block
       let indexBlockUpdated = false;
       let metaIndexBlockUpdated = false;
-      
+
       // Find and update marker-style index blocks in-place
       for (const [blockType, blockContent] of indexBlocks) {
         const isMetaIndex = blockType === "meta-index";
-        const startMarker = isMetaIndex ? META_INDEX_START_MARKER : INDEX_START_MARKER;
-        const endMarker = isMetaIndex ? META_INDEX_END_MARKER : INDEX_END_MARKER;
-        
+        const startMarker = isMetaIndex
+          ? META_INDEX_START_MARKER
+          : INDEX_START_MARKER;
+        const endMarker = isMetaIndex
+          ? META_INDEX_END_MARKER
+          : INDEX_END_MARKER;
+
         // Check if this type of block already exists in the content
         const blockRegex = new RegExp(
           `${startMarker}[\\s\\S]*?${endMarker}`,
           "gm"
         );
-        
+
         if (mainContent.match(blockRegex)) {
           // Replace content between markers while keeping the markers in the same position
           mainContent = mainContent.replace(blockRegex, blockContent);
-          
+
           // Mark this block type as updated
           if (isMetaIndex) {
             metaIndexBlockUpdated = true;
@@ -588,10 +615,12 @@ class IndexNote {
       let result = mainContent;
       for (const [blockType, blockContent] of indexBlocks) {
         const isMetaIndex = blockType === "meta-index";
-        
+
         // Only add blocks that weren't updated in-place
-        if ((isMetaIndex && !metaIndexBlockUpdated) || 
-            (!isMetaIndex && !indexBlockUpdated)) {
+        if (
+          (isMetaIndex && !metaIndexBlockUpdated) ||
+          (!isMetaIndex && !indexBlockUpdated)
+        ) {
           // Make sure there are always two newlines before each new block
           if (result.length > 0 && !result.endsWith("\n\n")) {
             result += result.endsWith("\n") ? "\n" : "\n\n";
@@ -837,9 +866,12 @@ export class IndexUpdater {
 
         // For auto-update or when active file isn't an index, process all files
         // Make this non-blocking by processing files in small batches with timeouts between
-        await this.processIndexNotesInBatches(indexSchema.indexNotes, indexSchema.rootNode);
+        await this.processIndexNotesInBatches(
+          indexSchema.indexNotes,
+          indexSchema.rootNode
+        );
       });
-      
+
       // Don't wait for the promise to resolve - return immediately
       return Promise.resolve();
     } catch (error) {
@@ -851,22 +883,29 @@ export class IndexUpdater {
   /**
    * Process index notes in small batches to avoid blocking the UI thread
    */
-  async processIndexNotesInBatches(indexNotes: IndexNote[], rootNode: Node, batchSize: number = 5): Promise<void> {
+  async processIndexNotesInBatches(
+    indexNotes: IndexNote[],
+    rootNode: Node,
+    batchSize: number = 5
+  ): Promise<void> {
     // Clone the array to avoid modifying the original
     const notesToProcess = [...indexNotes];
-    
+
     // Process notes in batches
     while (notesToProcess.length > 0) {
       // Take a batch of notes
       const batch = notesToProcess.splice(0, batchSize);
-      
+
       // Process this batch
       for (const indexNote of batch) {
         try {
           const indexBlocks = indexNote.createIndexBlocks(rootNode);
           const content = await this.app.vault.read(indexNote.note);
-          const updatedContent = indexNote.getUpdatedContent(content, indexBlocks);
-          
+          const updatedContent = indexNote.getUpdatedContent(
+            content,
+            indexBlocks
+          );
+
           // Only modify if there are actual changes
           if (content !== updatedContent) {
             await this.app.vault.modify(indexNote.note, updatedContent);
@@ -875,10 +914,10 @@ export class IndexUpdater {
           console.error("Error updating note:", indexNote.note.path, error);
         }
       }
-      
+
       // If there are more notes to process, wait a short time to let UI update
       if (notesToProcess.length > 0) {
-        await new Promise(resolve => setTimeout(resolve, 50));
+        await new Promise((resolve) => setTimeout(resolve, 50));
       }
     }
   }

@@ -17,6 +17,7 @@ export interface IndexNotesSettings {
     omit_index_titles: boolean;
     hierarchical_indices: boolean;
     granular_updates: boolean;
+    bold_index_note_titles: boolean;
 }
 
 export const DEFAULT_SETTINGS: IndexNotesSettings = {
@@ -34,6 +35,7 @@ export const DEFAULT_SETTINGS: IndexNotesSettings = {
     omit_index_titles: false,
     hierarchical_indices: false,
     granular_updates: false,
+    bold_index_note_titles: true
 }
 
 export class IndexNotesSettingTab extends PluginSettingTab {
@@ -216,6 +218,20 @@ export class IndexNotesSettingTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     } catch (error) {
                         console.error("Failed to save hierarchical indices setting:", error);
+                    }
+                }));
+
+        new Setting(this.containerEl)
+            .setName('Bold index note titles')
+            .setDesc('When enabled, index note titles with *idx tags will be formatted in bold.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.bold_index_note_titles)
+                .onChange(async (value) => {
+                    try {
+                        this.plugin.settings.bold_index_note_titles = value;
+                        await this.plugin.saveSettings();
+                    } catch (error) {
+                        console.error("Failed to save bold index note titles setting:", error);
                     }
                 }));
 
