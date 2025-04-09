@@ -656,6 +656,7 @@ export class IndexUpdater {
   previousHash: string = "";
   updateTimeout: NodeJS.Timeout | null = null;
   updateInProgress: boolean = false;
+  pendingTagUpdates: Set<string> = new Set(); // Track tags pending update
 
   constructor(app: App, settings: IndexNotesSettings) {
     this.app = app;
@@ -819,7 +820,118 @@ export class IndexUpdater {
     return indexSchema;
   }
 
-  async updateAsync(): Promise<void> {
+  /**
+   * Determines if a note should be updated based on relevant tags
+   * @param note The index note to check
+   * @param relevantTags Tags that were modified and need updates
+   * @returns True if the note should be updated
+   */
+  shouldUpdateNote(note: IndexNote, relevantTags: Set<string>): boolean {
+    // If no specific tags are specified, update all
+    if (relevantTags.size === 0) {
+      return true;
+    }
+
+    // Check if any of the note's index tags intersect with relevant tags
+    for (const tag of note.indexTags) {
+      // Check if this tag or any parent tag is in the relevant tags set
+      let checkTag = tag;
+      while (checkTag) {
+        if (relevantTags.has(checkTag)) {
+          return true;
+        } else {
+          break;
+        }
+      }
+    }
+
+    // Similarly check meta-index tags
+    for (const tag of note.metaIndexTags) {
+      let checkTag = tag;
+      while (checkTag) {
+        if (relevantTags.has(checkTag)) {
+          return true;
+        }
+        const lastSlashIndex = checkTag.lastIndexOf('/');
+        if (lastSlashIndex >= 0) {
+          checkTag = checkTag.substring(0, lastSlashIndex);
+        } else {
+          break;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Gets the set of all tags affected by a change in a specific file
+   * @param file The file that was changed
+   * @returns Set of tags that need to be updated
+   */
+  async getRelevantTagsForFile(file: TFile | null): Promise<Set<string>> {
+    const tags = new Set<string>();
+    
+    if (!file) return tags;
+    
+    // Get file metadata and frontmatter tags
+    const metadata = this.app.metadataCache.getCache(file.path);
+    if (!metadata) return tags;
+    
+    // Get tags from frontmatter
+    if (metadata.frontmatter?.tags) {
+      let fileTags: string[] = [];
+      
+      if (typeof metadata.frontmatter.tags === "string") {
+        fileTags = metadata.frontmatter.tags.split(",").map(tag => tag.trim());
+      } else if (Array.isArray(metadata.frontmatter.tags)) {
+        fileTags = metadata.frontmatter.tags.map(tag => 
+          typeof tag === "string" ? tag : String(tag)
+        );
+      }
+      
+      // Process each tag to get the exact tag path only
+      fileTags.forEach(tag => {
+        const canonicalTag = canonicalizeTag(tag);
+        // Remove index_tag or meta_index_tag from the end
+        const regexIndexTagComponents = new RegExp(
+          `(?:^|(?:\/))(?:${this.settings.index_tag})|(?:${this.settings.meta_index_tag})$`
+        );
+        const cleanTagPath = canonicalizeTag(
+          canonicalTag.replace(regexIndexTagComponents, "")
+        );
+        
+        // Only add the exact tag, not its parent tags
+        tags.add(cleanTagPath);
+      });
+    }
+    
+    // Get inline tags
+    if (metadata.tags) {
+      metadata.tags.forEach(tagObj => {
+        if (tagObj.tag) {
+          const tag = tagObj.tag.startsWith("#") 
+            ? tagObj.tag.substring(1) 
+            : tagObj.tag;
+          
+          const canonicalTag = canonicalizeTag(tag);
+          const regexIndexTagComponents = new RegExp(
+            `(?:^|(?:\/))(?:${this.settings.index_tag})|(?:${this.settings.meta_index_tag})$`
+          );
+          const cleanTagPath = canonicalizeTag(
+            canonicalTag.replace(regexIndexTagComponents, "")
+          );
+          
+          // Only add the exact tag, not its parent tags
+          tags.add(cleanTagPath);
+        }
+      });
+    }
+    
+    return tags;
+  }
+
+  async updateAsync(relevantTags: Set<string> = new Set()): Promise<void> {
     try {
       const t0 = Date.now();
       // Check if there's an active file in the editor
@@ -865,10 +977,16 @@ export class IndexUpdater {
           }
         }
 
-        // For auto-update or when active file isn't an index, process all files
-        // Make this non-blocking by processing files in small batches with timeouts between
+        // Filter index notes to only those that need updating based on the relevant tags
+        const notesToUpdate = indexSchema.indexNotes.filter(note => 
+          this.shouldUpdateNote(note, relevantTags)
+        );
+        
+        console.log(`Updating ${notesToUpdate.length} of ${indexSchema.indexNotes.length} index notes based on relevant tags for ${relevantTags}`);
+        
+        // Process only the filtered notes
         await this.processIndexNotesInBatches(
-          indexSchema.indexNotes,
+          notesToUpdate,
           indexSchema.rootNode
         );
       });
@@ -923,10 +1041,18 @@ export class IndexUpdater {
     }
   }
 
-  update(): void {
+  update(changedFile: TFile | null = null): void {
     // Clear any existing timeout to implement debouncing
     if (this.updateTimeout) {
       clearTimeout(this.updateTimeout);
+    }
+    
+    // If a specific file changed, add its tags to the pending updates
+    if (changedFile) {
+      this.getRelevantTagsForFile(changedFile).then(tags => {
+        // Add all relevant tags to the pending set
+        tags.forEach(tag => this.pendingTagUpdates.add(tag));
+      });
     }
 
     // Queue the update with a small delay to allow UI operations to complete first
@@ -934,9 +1060,13 @@ export class IndexUpdater {
       // Only start a new update if there's no update in progress
       if (!this.updateInProgress) {
         this.updateInProgress = true;
+        
+        // Create a copy of the pending tags and clear the pending set
+        const tagsToUpdate = new Set(this.pendingTagUpdates);
+        this.pendingTagUpdates.clear();
 
-        // Run the update asynchronously
-        this.updateAsync()
+        // Run the update asynchronously with the collected tags
+        this.updateAsync(tagsToUpdate)
           .catch((error) => {
             console.error("Unhandled error in update:", error);
           })

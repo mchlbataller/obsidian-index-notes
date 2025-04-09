@@ -1,4 +1,4 @@
-import { Plugin, Modal, App, Setting } from "obsidian";
+import { Plugin, Modal, App, Setting, TFile } from "obsidian";
 import {
   DEFAULT_SETTINGS,
   IndexNotesSettings,
@@ -14,6 +14,40 @@ const MARKDOWN_EXTENSION = ".md";
 export default class IndexNotesPlugin extends Plugin {
   settings: IndexNotesSettings;
   index_updater: IndexUpdater;
+  debounceTimer: NodeJS.Timeout | null = null;
+
+  // Helper method to check if file has relevant tags for indexing
+  private hasRelevantTags(file: TFile): boolean {
+    if (!file) return false;
+    const metadata = this.app.metadataCache.getFileCache(file);
+    if (!metadata || !metadata.frontmatter) return false;
+
+    const tags = metadata.frontmatter.tags || [];
+    return tags.some((tag: string) =>
+      tag.includes(this.settings.index_tag) ||
+      tag.includes(this.settings.meta_index_tag)
+    );
+  }
+
+  // Debounced update method to prevent excessive updates
+  private debouncedUpdate(changedFile: TFile | null = null): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+
+    this.debounceTimer = setTimeout(() => {
+      console.log("Debounced update triggered");
+
+      // If we have a specific file that changed, check if it's relevant before updating
+      if (changedFile && !this.hasRelevantTags(changedFile)) {
+        console.log("File changed but not relevant for indexing, skipping update");
+        return;
+      }
+
+      this.index_updater.update(changedFile);
+      this.debounceTimer = null;
+    }, 2000); // 2-second debounce
+  }
 
   async onload() {
     await this.loadSettings();
@@ -22,37 +56,33 @@ export default class IndexNotesPlugin extends Plugin {
 
     if (this.settings.enable_auto_update) {
       if (this.settings.granular_updates) {
-        // Update the index notes when changes are made to the vault.
+        // Update the index notes when changes are made to the vault, with debounce
         this.registerEvent(
           this.app.vault.on("modify", (file) => {
-            if (!file) return;
-            // Get file metadata
-            this.index_updater.update();
+            if (!file || !(file instanceof TFile)) return;
             console.log("index_tag: file modified", file.path);
+            this.index_updater.update(file);
           })
         );
         this.registerEvent(
           this.app.vault.on("delete", (file) => {
-            if (!file) return;
-            // Get file metadata
-            this.index_updater.update();
+            if (!file || !(file instanceof TFile)) return;
             console.log("index_tag: file deleted", file.path);
+            this.index_updater.update(file);
           })
         );
         this.registerEvent(
           this.app.vault.on("rename", (file) => {
-            if (!file) return;
-            // Get file metadata
-            this.index_updater.update();
+            if (!file || !(file instanceof TFile)) return;
             console.log("index_tag: file renamed", file.path);
+            this.index_updater.update(file);
           })
         );
         this.registerEvent(
           this.app.vault.on("create", (file) => {
-            if (!file) return;
-            // Get file metadata
-            this.index_updater.update();
+            if (!file || !(file instanceof TFile)) return;
             console.log("index_tag: file created", file.path);
+            this.index_updater.update(file);
           })
         );
       } else {
