@@ -1,4 +1,11 @@
-import { Plugin, Modal, App, Setting, TFile } from "obsidian";
+import {
+  Plugin,
+  Modal,
+  App,
+  Setting,
+  TFile,
+  EditorTransaction,
+} from "obsidian";
 import {
   DEFAULT_SETTINGS,
   IndexNotesSettings,
@@ -15,19 +22,11 @@ export default class IndexNotesPlugin extends Plugin {
   settings: IndexNotesSettings;
   index_updater: IndexUpdater;
   debounceTimer: NodeJS.Timeout | null = null;
-
-  // Helper method to check if file has relevant tags for indexing
-  private hasRelevantTags(file: TFile): boolean {
-    if (!file) return false;
-    const metadata = this.app.metadataCache.getFileCache(file);
-    if (!metadata || !metadata.frontmatter) return false;
-
-    const tags = metadata.frontmatter.tags || [];
-    return tags.some((tag: string) =>
-      tag.includes(this.settings.index_tag) ||
-      tag.includes(this.settings.meta_index_tag)
-    );
-  }
+  lastModified: number = 0; // Track when the last modification occurred
+  modifiedFile: TFile | null = null; // Track which file was modified
+  activeEditing: boolean = false; // Track if user is actively editing
+  pendingUpdate: boolean = false; // Track if an update is waiting to be triggered
+  fileTagCache: Map<string, Set<string>> = new Map(); // Cache to track tags for each file
 
   // Debounced update method to prevent excessive updates
   private debouncedUpdate(changedFile: TFile | null = null): void {
@@ -36,17 +35,19 @@ export default class IndexNotesPlugin extends Plugin {
     }
 
     this.debounceTimer = setTimeout(() => {
-      console.log("Debounced update triggered");
-
-      // If we have a specific file that changed, check if it's relevant before updating
-      if (changedFile && !this.hasRelevantTags(changedFile)) {
-        console.log("File changed but not relevant for indexing, skipping update");
-        return;
+      // Only perform update if enough time has passed since the last modification
+      const currentTime = Date.now();
+      if (currentTime - this.lastModified >= 5000 || !this.modifiedFile) {
+        console.log("Debounced update triggered - sufficient time has passed");
+        this.index_updater.update(changedFile || this.modifiedFile);
+        this.modifiedFile = null;
+      } else {
+        console.log("Skipping update - still actively editing");
       }
 
-      this.index_updater.update(changedFile);
       this.debounceTimer = null;
-    }, 2000); // 2-second debounce
+      this.pendingUpdate = false;
+    }, this.settings.update_interval_seconds);
   }
 
   async onload() {
@@ -54,40 +55,59 @@ export default class IndexNotesPlugin extends Plugin {
 
     this.index_updater = new IndexUpdater(this.app, this.settings);
 
-    if (this.settings.enable_auto_update) {
-      if (this.settings.granular_updates) {
-        // Update the index notes when changes are made to the vault, with debounce
-        this.registerEvent(
-          this.app.vault.on("modify", (file) => {
-            if (!file || !(file instanceof TFile)) return;
-            console.log("index_tag: file modified", file.path);
-            this.index_updater.update(file);
-          })
-        );
-        this.registerEvent(
-          this.app.vault.on("delete", (file) => {
-            if (!file || !(file instanceof TFile)) return;
-            console.log("index_tag: file deleted", file.path);
-            this.index_updater.update(file);
-          })
-        );
-        this.registerEvent(
-          this.app.vault.on("rename", (file) => {
-            if (!file || !(file instanceof TFile)) return;
-            console.log("index_tag: file renamed", file.path);
-            this.index_updater.update(file);
-          })
-        );
-        this.registerEvent(
-          this.app.vault.on("create", (file) => {
-            if (!file || !(file instanceof TFile)) return;
-            console.log("index_tag: file created", file.path);
-            this.index_updater.update(file);
-          })
-        );
-      } else {
-        // Setup the update interval if auto-update is enabled
-        this.app.workspace.onLayoutReady(async () => {
+    this.app.workspace.onLayoutReady(async () => {
+      if (this.settings.enable_auto_update) {
+        if (this.settings.granular_updates) {
+          // Set up a 5-second inactivity timer to trigger updates
+          this.registerInterval(
+            window.setInterval(() => {
+              const currentTime = Date.now();
+              if (this.modifiedFile && currentTime - this.lastModified >= 5000) {
+                console.log("Inactivity timer: updating after 5 seconds of no changes");
+                this.index_updater.update(this.modifiedFile);
+                this.modifiedFile = null;
+              }
+            }, 1000) // Check every second
+          );
+
+          // Update the index notes when changes are made to the vault
+          this.registerEvent(
+            this.app.vault.on("modify", (file) => {
+              if (!file || !(file instanceof TFile)) return;
+              console.log("index_tag: file modified", file.path);
+
+              // Update the last modified time and file
+              this.lastModified = Date.now();
+              this.modifiedFile = file;
+
+              // We don't trigger update immediately - the inactivity timer will handle it
+            })
+          );
+
+          // For non-editing events, trigger updates immediately
+          this.registerEvent(
+            this.app.vault.on("delete", (file) => {
+              if (!file || !(file instanceof TFile)) return;
+              console.log("index_tag: file deleted", file.path);
+              this.index_updater.update(file);
+            })
+          );
+          this.registerEvent(
+            this.app.vault.on("rename", (file) => {
+              if (!file || !(file instanceof TFile)) return;
+              console.log("index_tag: file renamed", file.path);
+              this.index_updater.update(file);
+            })
+          );
+          this.registerEvent(
+            this.app.vault.on("create", (file) => {
+              if (!file || !(file instanceof TFile)) return;
+              console.log("index_tag: file created", file.path);
+              this.index_updater.update(file);
+            })
+          );
+        } else {
+          // Setup the update interval if auto-update is enabled
           const interval_ms = this.settings.update_interval_seconds * 1000;
 
           // Use registerInterval instead of setInterval
@@ -100,49 +120,49 @@ export default class IndexNotesPlugin extends Plugin {
           console.log(
             `Set up auto-update interval: ${this.settings.update_interval_seconds} seconds`
           );
-        });
+        }
+      } else {
+        console.log("Auto-update is disabled. Only manual updates will occur.");
+        // Add event listener for file opens
+        this.registerEvent(
+          this.app.workspace.on("file-open", (file) => {
+            if (!file) return;
+
+            // Get file metadata
+            const metadata = this.app.metadataCache.getFileCache(file);
+            console.log("index_tag: file opened", file.path, metadata);
+            if (!metadata || !metadata.frontmatter) return;
+
+            const tags = metadata.frontmatter.tags || [];
+
+            console.log("index_tag: found tags", tags);
+            console.log(
+              "index_tag: settings",
+              this.settings.index_tag,
+              this.settings.meta_index_tag
+            );
+            // Check if any tags have "idx" in them
+            const hasIdxTags: boolean = tags.some((tag: string) =>
+              tag.includes(this.settings.index_tag)
+            );
+            console.log("index_tag: has idx tags:", hasIdxTags);
+
+            // Check if this file has index tags
+            if (
+              tags.some(
+                (tag: string) =>
+                  tag.includes(this.settings.index_tag) ||
+                  tag.includes(this.settings.meta_index_tag)
+              )
+            ) {
+              // Only update when an index note is opened
+              console.log("Index note opened, updating index");
+              this.index_updater.update();
+            }
+          })
+        );
       }
-    } else {
-      console.log("Auto-update is disabled. Only manual updates will occur.");
-      // Add event listener for file opens
-      this.registerEvent(
-        this.app.workspace.on("file-open", (file) => {
-          if (!file) return;
-
-          // Get file metadata
-          const metadata = this.app.metadataCache.getFileCache(file);
-          console.log("index_tag: file opened", file.path, metadata);
-          if (!metadata || !metadata.frontmatter) return;
-
-          const tags = metadata.frontmatter.tags || [];
-
-          console.log("index_tag: found tags", tags);
-          console.log(
-            "index_tag: settings",
-            this.settings.index_tag,
-            this.settings.meta_index_tag
-          );
-          // Check if any tags have "idx" in them
-          const hasIdxTags: boolean = tags.some((tag: string) =>
-            tag.includes(this.settings.index_tag)
-          );
-          console.log("index_tag: has idx tags:", hasIdxTags);
-
-          // Check if this file has index tags
-          if (
-            tags.some(
-              (tag: string) =>
-                tag.includes(this.settings.index_tag) ||
-                tag.includes(this.settings.meta_index_tag)
-            )
-          ) {
-            // Only update when an index note is opened
-            console.log("Index note opened, updating index");
-            this.index_updater.update();
-          }
-        })
-      );
-    }
+    });
 
     this.addSettingTab(new IndexNotesSettingTab(this.app, this));
 

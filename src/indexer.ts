@@ -657,6 +657,7 @@ export class IndexUpdater {
   updateTimeout: NodeJS.Timeout | null = null;
   updateInProgress: boolean = false;
   pendingTagUpdates: Set<string> = new Set(); // Track tags pending update
+  fileTagHistory: Map<string, Set<string>> = new Map(); // Track previous tags for files
 
   constructor(app: App, settings: IndexNotesSettings) {
     this.app = app;
@@ -865,7 +866,8 @@ export class IndexUpdater {
   }
 
   /**
-   * Gets the set of all tags affected by a change in a specific file
+   * Gets the set of all tags affected by a change in a specific file,
+   * including tags that were removed since the last modification
    * @param file The file that was changed
    * @returns Set of tags that need to be updated
    */
@@ -878,7 +880,10 @@ export class IndexUpdater {
     const metadata = this.app.metadataCache.getCache(file.path);
     if (!metadata) return tags;
     
-    // Get tags from frontmatter
+    // Get current tags from frontmatter and inline tags
+    const currentTags = new Set<string>();
+    
+    // Process frontmatter tags
     if (metadata.frontmatter?.tags) {
       let fileTags: string[] = [];
       
@@ -901,12 +906,13 @@ export class IndexUpdater {
           canonicalTag.replace(regexIndexTagComponents, "")
         );
         
-        // Only add the exact tag, not its parent tags
+        // Add to current tags and relevant tags
+        currentTags.add(cleanTagPath);
         tags.add(cleanTagPath);
       });
     }
     
-    // Get inline tags
+    // Process inline tags
     if (metadata.tags) {
       metadata.tags.forEach(tagObj => {
         if (tagObj.tag) {
@@ -922,11 +928,28 @@ export class IndexUpdater {
             canonicalTag.replace(regexIndexTagComponents, "")
           );
           
-          // Only add the exact tag, not its parent tags
+          // Add to current tags and relevant tags
+          currentTags.add(cleanTagPath);
           tags.add(cleanTagPath);
         }
       });
     }
+    
+    // Check for removed tags by comparing with the history
+    if (this.fileTagHistory.has(file.path)) {
+      const previousTags = this.fileTagHistory.get(file.path)!;
+      
+      // Add any tags that were present before but aren't now
+      previousTags.forEach(tag => {
+        if (!currentTags.has(tag)) {
+          console.log(`Tag was removed from file: ${tag}`);
+          tags.add(tag); // This tag was deleted, so include it for updates
+        }
+      });
+    }
+    
+    // Update the history with current tags
+    this.fileTagHistory.set(file.path, currentTags);
     
     return tags;
   }
@@ -982,7 +1005,7 @@ export class IndexUpdater {
           this.shouldUpdateNote(note, relevantTags)
         );
         
-        console.log(`Updating ${notesToUpdate.length} of ${indexSchema.indexNotes.length} index notes based on relevant tags for ${relevantTags}`);
+        console.log(`Updating ${notesToUpdate.length} of ${indexSchema.indexNotes.length} index notes based on relevant tags`, {relevantTags}, "for ", activeFile?.path);
         
         // Process only the filtered notes
         await this.processIndexNotesInBatches(
